@@ -19,6 +19,8 @@
 ##############
 
 *.xml
+*.xls
+*.xlsx
 
 
 # Packages #
