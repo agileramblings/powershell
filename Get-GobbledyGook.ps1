@@ -5,4 +5,5 @@ $newBtn = $btn | ? {$_.value -eq "Generate some gobbledygook"}
 $newBtn.click()
 $response = $doc.getElementsByName("insight")
 $newResponse = $response | ? {$_.name -eq "insight"}
-Write-Host $newResponse.value
+Write-Host $newResponse.value | clip
+
