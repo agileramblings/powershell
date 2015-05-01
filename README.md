@@ -14,5 +14,5 @@ install-module PsReadLine
 ### Chocolatey
 (new-object Net.WebClient).DownloadString("https://chocolatey.org/install.ps1") | iex
  
- ### Sample profile.ps1
- https://github.com/agileramblings/powershell/blob/master/profile.ps1
+### Sample profile.ps1
+https://github.com/agileramblings/powershell/blob/master/profile.ps1
