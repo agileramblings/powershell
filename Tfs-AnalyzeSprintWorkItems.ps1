@@ -52,10 +52,10 @@ else
             $results = $wiQuery.RunQuery()
 
             #display all retrospective notes
-            $results | % { Write-Host "Retro Notes $($_.Fields["Retrospective"].Value )" -ForegroundColor Cyan }
+            #$results | % { Write-Host "Retro Notes $($_.Fields["Retrospective"].Value )" -ForegroundColor Cyan }
                         
             #display all description notes
-            $results | % { Write-Host "Retro Notes $($_.Fields["Description"].Value )" -ForegroundColor Cyan}
+            #$results | % { Write-Host "Retro Notes $($_.Fields["Description"].Value )" -ForegroundColor Cyan}
             
             $matches = $results | ? {
                 if ($_.Fields.Name.Contains("Retrospective")){
@@ -79,6 +79,7 @@ else
                 
                 }else {
                     Write-Host " $($tp.Name)" -foregroundcolor Magenta
+
                 }
             }
         }
