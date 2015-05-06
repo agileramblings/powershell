@@ -1,18 +1,4 @@
 ﻿function Touch-File([string[]]$paths) {
-
-<#
-.SYNOPSIS
- A simple implementation of the unix "touch" 
-.DESCRIPTION
-Touch-File will create a file if none exists or will update the file system timestamp if the file does exist
-.EXAMPLE
-Touch-File x.txt 
-.EXAMPLE
-Touch-File x
-.PARAMETER path
-The path, ending with the file name, that you would like to create or update the file system timestamp on
-#>
-
 	begin {
           function updateFileSystemInfo([System.IO.FileSystemInfo]$fsInfo) {
                $datetime = get-date
@@ -38,7 +24,7 @@ The path, ending with the file name, that you would like to create or update the
           }
           
           function touchNewFile([string]$path) {
-             $null > $path
+             $null > $pathTest
           }
     }
 

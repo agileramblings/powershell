@@ -1,6 +1,8 @@
 ﻿#Master TeamProject Upgrade Script
 Clear-Host
 
+Import-Module .\data\WindowsPowerShell\Modules\dscTfs\DscTfs.psm1
+
 #setup global variaables
 Write-Host "Building Global Variables list" -ForegroundColor Magenta
 $myVar = @{ 
@@ -13,7 +15,7 @@ $myVar = @{
     "ImportableDir" = "Importable_2013_Scrum\";
     "TFSVersion" = "2013.4";
 }
-$myVar.Values | % { Write-Host $_ -ForegroundColor Magenta }
+$myVar.GetEnumerator() | % { Write-Host $("{0}" -f $_.Key) -ForegroundColor Green -NoNewline; Write-Host $(" = {0}" -f $_.Value) -ForegroundColor Magenta }
 
 Write-Host "List of TP that require manual upgrade " -ForegroundColor Cyan
 $TPsToUpgrade = @(
@@ -40,6 +42,10 @@ $TPsToUpgrade = @(
 )
 $TPsToUpgrade | % { Write-Host $_ -ForegroundColor Cyan }
 
+#delete WITD and categories files between runs
+Remove-Item "$($myVar.ResultsDir + $myVar.DefaultDir)\*"
+Remove-Item "$($myVar.ResultsDir + $myVar.ImportableDir)\*"
+
 #export work items from Scrum
 Write-Host "Getting WITD List for Scrum 2013.4 Process Template" -ForegroundColor Yellow
 $canonicalScrumWITD = witadmin listwitd /collection:$($myVar.TFSUrl + $myVar.TPC02) /p:$($myVar.TPScrum)
@@ -59,18 +65,28 @@ Write-Host "Creating Emtpy Categories files..." -ForegroundColor Yellow
 $exportedCats.CATEGORIES.RemoveAll()
 $exportedCats.Save("$($myVar.ResultsDir + $myVar.ImportableDir)Empty_categories.xml")
 
+$configServer = gtfs $myVar.TfsUrl $myVar.TFSVersion
 foreach ($tp in $TPsToUpgrade){
+
+    #get work item types from TP
+    Write-Host "Get all Work Item Templates from $tp" -ForegroundColor Yellow
+    $currentTPWITList = witadmin listwitd /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp)
+    
     Write-Host "Deleting all Work Items from $tp" -ForegroundColor Red
     #Delete All Work Items from Target TP
-    Delete-TfsWorkItems $myVar.TFSUrl $myVar.TFSVersion $myVar.TPC01 $tp "Bug"
-
+    foreach($wit in $currentTPWITList){
+        Delete-TfsWorkItems $configServer $myVar.TPC01 $tp $wit
+    }
+    
     #Change Categories to be empty
     Write-Host "Changing all Categories to be empty in $tp" -ForegroundColor Red
     witadmin importcategories /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$tp /f:"$($myVar.ResultsDir + $myVar.ImportableDir)Empty_categories.xml"
 
     #Delete WITD
     Write-Host "Destroying all WITD in $tp" -ForegroundColor Red
-    Destroy-TfsWorkItemTemplate $myVar.TFSUrl $myVar.TFSVersion $myVar.TPC01 $tp "Bug"
+    foreach($wit in $currentTPWITList){
+        Destroy-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $wit
+    }
 
     #Import new Scrum WITD
     Write-Host "Importing new Scrum 2013.4 WITD into $tp" -ForegroundColor Yellow
@@ -78,7 +94,7 @@ foreach ($tp in $TPsToUpgrade){
     
     #import new categories for Scrum
     Write-Host "Importing Scrum 2013.4 Categories into $tp" -ForegroundColor Yellow
-    witadmin importcategories /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($myVar.TP01) /f:"$($myVar.ResultsDir + $myVar.ImportableDir) + categories.xml"
+    witadmin importcategories /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp) /f:"$($myVar.ResultsDir + $myVar.ImportableDir)categories.xml"
 
     Write-Host "$tp should now be ready for an upgrade" -ForegroundColor Green
 }
