@@ -1,6 +1,6 @@
 Write-Host "Loading DscTfs Module"
 
-function Import-TFSAssembly_2010 {
+function Import-TFSAssemblies_2010 {
     Add-Type -AssemblyName "Microsoft.TeamFoundation.Client, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
     Add-Type -AssemblyName "Microsoft.TeamFoundation.Common, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
     Add-Type -AssemblyName "Microsoft.TeamFoundation.VersionControl.Client, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
@@ -614,13 +614,14 @@ function Get-TfsTeamProjectCollectionAnalysis() {
     begin{ }
 
     process {
+        Write-Verbose "$(Get-Date -Format g) - Beginning Analysis"
         $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
 
         Write-Verbose "Saving a dictionary of all fields found on PTCs"
         [hashtable]$witFieldDictionary = @{}
         [int]$totalFieldsFound = 6
     
-        Write-Verbose "iterate through each TPC"
+        Write-Verbose "Iterating through each TPC"
         foreach($tpcId in $tpcIds){
             Write-Verbose "Get TPC instance for $tpcId"
             $tpc = $configServer.GetTeamProjectCollection($tpcId)
@@ -642,9 +643,14 @@ function Get-TfsTeamProjectCollectionAnalysis() {
             Write-Verbose "Get list of TeamProjects from WorkItemStore for $($tpc.Name)"
             $tps = $wiService.Projects
 
-            Write-Verbose "Iterating through the TeamProjects"
+            Write-Verbose "Iterating through the Team Projects"
+            Write-Host "Iteration through the Team Projects"
+            [int]$count = 0
             foreach ($tp in $tps)
             { 
+                if ($count %= 2) { Write-Host "." -NoNewline }else{ Write-Host "." -NoNewline -ForegroundColor Green }
+                $count++
+
                 Write-Verbose "---------------- $($tp.Name) ----------------"
                 Write-Verbose "Get most recent changeset check-in for this TP"
                 $currentTP = $allReposInTPC | ? {$_.ServerItem.Substring(2) -eq $($tp.Name)}
@@ -735,10 +741,13 @@ function Get-TfsTeamProjectCollectionAnalysis() {
                 $csvLine[3] =  Get-Hash $allWITHash
                 $csvLine = [string]::Join(",", $csvLine)
                 Write-Debug $csvLine
-                Write-Verbose "Writing csv entry to $($analysisRoot + "witd.csv")"
+                Write-Verbose "Writing csv entry to $($analysisRoot + "\witd.csv")"
                 $csvLine >> $($analysisRoot + "\witd.csv")
-            }   
+            }
+            Write-Host "Completed Iterating Through Team Projects"
         }
+
+        Write-Verbose "$(Get-Date -Format g) - Analysis Complete"
     }
 }
 

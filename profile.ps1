@@ -1,23 +1,44 @@
-# http://stackoverflow.com/questions/2124753/how-i-can-use-powershell-with-the-visual-studio-command-prompt
-# Set environment variables for Visual Studio Command Prompt
-pushd 'c:\Program Files (x86)\Microsoft Visual Studio 12.0\VC'
-cmd /c "vcvarsall.bat&set" |
-foreach {
-  if ($_ -match "=") {
-    $v = $_.split("="); set-item -force -path "ENV:\$($v[0])"  -value "$($v[1])"
-  }
-}
-popd
-write-host "`nVisual Studio 2013 Command Prompt variables set." -ForegroundColor Yellow
+function Set-Tfs2013 (){
+    # http://stackoverflow.com/questions/2124753/how-i-can-use-powershell-with-the-visual-studio-command-prompt
+    # Set environment variables for Visual Studio Command Prompt
+    pushd 'c:\Program Files (x86)\Microsoft Visual Studio 12.0\VC'
+    cmd /c "vcvarsall.bat&set" |
+    foreach {
+      if ($_ -match "=") {
+        $v = $_.split("="); set-item -force -path "ENV:\$($v[0])"  -value "$($v[1])"
+      }
+    }
+    popd
+    write-host "`nVisual Studio 2013 Command Prompt variables set." -ForegroundColor Yellow
 
-#add to env variables
-#C:\Program Files (x86)\Microsoft Team Foundation Server 2013 Power Tools 
-$env:Path += ";C:\Program Files (x86)\Microsoft Team Foundation Server 2013 Power Tools"
+    #add to env variables
+    $env:Path += ";C:\Program Files (x86)\Microsoft Team Foundation Server 2013 Power Tools"
+}
+
+function Set-Tfs2010 (){
+    # Set environment variables for Visual Studio Command Prompt
+    pushd 'c:\Program Files (x86)\Microsoft Visual Studio 10.0\VC'
+    cmd /c "vcvarsall.bat&set" |
+    foreach {
+      if ($_ -match "=") {
+        $v = $_.split("="); set-item -force -path "ENV:\$($v[0])"  -value "$($v[1])"
+      }
+    }
+    popd
+    write-host "`nVisual Studio 2010 Command Prompt variables set." -ForegroundColor Yellow
+
+    #add to env variables
+    $env:Path += ";C:\Program Files (x86)\Microsoft Team Foundation Server 2010 Power Tools"
+}
 
 if ($host.Name -eq 'ConsoleHost')
 {
     Import-Module PSReadline
 }
+
+#add PSDrive to ps scripts folder
+New-PSDrive "scripts" -PSProvider FileSystem -Root "\\cocdata1\dwhite2`$\TFS"
+New-PSDrive "modules" -PSProvider FileSystem -Root "\\cocdata1\dwhite2`$\data\WindowsPowerShell\Modules"
 
 #region Smart Insert/Delete
 
