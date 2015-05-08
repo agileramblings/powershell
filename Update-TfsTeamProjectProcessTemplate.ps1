@@ -1,16 +1,16 @@
 ﻿#Master TeamProject Upgrade Script
 Clear-Host
 
-Import-Module .\data\WindowsPowerShell\Modules\dscTfs\DscTfs.psm1
+Set-Tfs2013
 
 #setup global variaables
 Write-Host "Building Global Variables list" -ForegroundColor Magenta
 $myVar = @{ 
-    "TFSUrl" = "http://divcd83:8080/tfs/";
+    "TFSUrl" = "http://ditfssb01:8080/tfs/";
     "TPC01" = "ProjectCollection01";  
     "TPC02" = "ProjectCollection02";  
     "TPScrum" = "Scrum 2013.4";
-    "ResultsDir" = "C:\TFS\Results\";
+    "ResultsDir" = "C:\TFS\Trial-Upgrade-Results\";
     "DefaultDir" = "Default_2013_Scrum\";
     "ImportableDir" = "Importable_2013_Scrum\";
     "TFSVersion" = "2013.4";
@@ -40,7 +40,16 @@ $TPsToUpgrade = @(
     ,"Reuse Library"
     ,"Roads Asset Management"
 )
+
+# Won't be able to do this - leave in for instruction sake
+# Invoke-Command -ComputerName divcd163 -ScriptBlock { TFSBackup -i "PISQLSK801\TFSPD" -l "\\exchange\exchange\TFS_Migration" }
+# Invoke-Command -ComputerName divcd163 -ScriptBlock { TfsRestore -i "DIVCD163" -l "\\exchange\exchange\TFS_Migration" }
+
 $TPsToUpgrade | % { Write-Host $_ -ForegroundColor Cyan }
+
+$folder = New-Folder $myVar.ResultsDir
+$defaultDir = New-Folder $($myVar.ResultsDir + $myVar.DefaultDir)
+$importableDir = New-Folder $($myVar.ResultsDir + $myVar.ImportableDir)
 
 #delete WITD and categories files between runs
 Remove-Item "$($myVar.ResultsDir + $myVar.DefaultDir)\*"
@@ -72,10 +81,12 @@ foreach ($tp in $TPsToUpgrade){
     Write-Host "Get all Work Item Templates from $tp" -ForegroundColor Yellow
     $currentTPWITList = witadmin listwitd /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp)
     
+    Write-host "Backing up work items from $tp" -ForegroundColor Green
     Write-Host "Deleting all Work Items from $tp" -ForegroundColor Red
     #Delete All Work Items from Target TP
     foreach($wit in $currentTPWITList){
-        Delete-TfsWorkItems $configServer $myVar.TPC01 $tp $wit
+        Backup-TfsWorkItems $configServer $($myVar.TFSUrl + $myVar.TPC01) $tp $wit $($myVar.ResultsDir)
+        Remove-TfsWorkItems $configServer $myVar.TPC01 $tp $wit
     }
     
     #Change Categories to be empty
@@ -85,12 +96,12 @@ foreach ($tp in $TPsToUpgrade){
     #Delete WITD
     Write-Host "Destroying all WITD in $tp" -ForegroundColor Red
     foreach($wit in $currentTPWITList){
-        Destroy-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $wit
+        Remove-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $wit
     }
 
     #Import new Scrum WITD
     Write-Host "Importing new Scrum 2013.4 WITD into $tp" -ForegroundColor Yellow
-    Import-TfsWorkItemTemplate $($myVar.TFSUrl + $myVar.TPC01) $tp $($myVar.ResultsDir + $myVar.ImportableDir)
+    Import-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $($myVar.ResultsDir + $myVar.ImportableDir)
     
     #import new categories for Scrum
     Write-Host "Importing Scrum 2013.4 Categories into $tp" -ForegroundColor Yellow
