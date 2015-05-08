@@ -22,3 +22,6 @@ http://stackoverflow.com/questions/7803076/can-console2-be-used-with-powershell
  
 ### Sample profile.ps1
 https://github.com/agileramblings/powershell/blob/master/profile.ps1
+
+### Generic Methods
+https://gallery.technet.microsoft.com/scriptcenter/Invoke-Generic-Methods-bf7675af
