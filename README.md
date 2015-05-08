@@ -9,6 +9,7 @@ These are PowerShell nuggets that I use all the time
 
 ### PSReadLine
 *After getting PSGet*
+
 install-module PsReadLine
 
 ### Chocolatey
@@ -16,6 +17,7 @@ install-module PsReadLine
  
 ### ConsoleZ download page
 https://github.com/cbucher/console/wiki/Downloads
+
 http://stackoverflow.com/questions/7803076/can-console2-be-used-with-powershell
  
 ### Sample profile.ps1
