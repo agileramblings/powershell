@@ -14,5 +14,9 @@ install-module PsReadLine
 ### Chocolatey
 (new-object Net.WebClient).DownloadString("https://chocolatey.org/install.ps1") | iex
  
+### ConsoleZ download page
+https://github.com/cbucher/console/wiki/Downloads
+http://stackoverflow.com/questions/7803076/can-console2-be-used-with-powershell
+ 
 ### Sample profile.ps1
 https://github.com/agileramblings/powershell/blob/master/profile.ps1
