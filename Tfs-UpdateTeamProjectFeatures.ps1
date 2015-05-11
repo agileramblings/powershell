@@ -6,9 +6,14 @@
 Clear-Host
 
 function Import-TFS2013 {
+    # server OM bin folder
+    # "C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin"
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Framework.Server.dll'
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.Core.dll'
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.WebAccess.WorkItemTracking.Common.dll'
+    
+    #copy client OM from Visual Studio install on developer machine to Server bin folder noted above
+    # "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0"
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.WorkItemTracking.Client.dll'
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Client.dll'
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Common.dll'
@@ -103,15 +108,17 @@ else
 {
     Write-Host "Authenticated"
 
-    [string] $url = 'http://divcd83:8080/tfs/projectcollection02'
+    [string] $url = 'http://divcd83:8080/tfs/projectcollection01'
+    #[string] $webConfigLocation = "\\ditfssb01\c$\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services"
     [string] $webConfigLocation = 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\web.config'
     
     # create folder for logging artifacts
     if (!(Test-Path -Path C:\TFS\Results\)){
         $null = New-Item -ItemType directory -Path C:\TFS\Results\
+    } else {
+        #clean out the folder 
+        Remove-Item C:\TFS\Results\PT_Upgrade_Log.csv -Force -ErrorAction SilentlyContinue
     }
-    #clean out the folder 
-    Remove-Item C:\TFS\Results\PT_Upgrade_Log.csv
 
     $myDsh = Get-TfsDeploymentServiceHost $url $webConfigLocation
     $ctx = Get-TfsGetContext $myDsh[0] $myDsh[1]
