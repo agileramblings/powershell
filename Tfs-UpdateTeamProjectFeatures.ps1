@@ -19,15 +19,24 @@ function Import-TFS2013 {
     Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Common.dll'
 }
 
-function Get-TfsDbConnectionString($location){
-    Write-Host "------ Getting DB Connection String from Web Config located at $location ..."
-    if (![System.IO.File]::Exists($location)) {
-        Write-Host "Invalid web.config location: $location"
-        exit;
+function Get-TfsDbConnectionString(){
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        [string]$location
+    )
+    begin{}
+    process {
+        Write-Host "------ Getting DB Connection String from Web Config located at $location ..."
+        if (![System.IO.File]::Exists($location)) {
+            Write-Host "Invalid web.config location: $location"
+            exit;
+        }
+        [xml]$webConfig = Get-Content $location
+        $node = $webConfig.SelectSingleNode("/configuration/appSettings/add[@key='applicationDatabase']/@value");
+        $node.Value
     }
-    [xml]$webConfig = Get-Content $location
-    $node = $webConfig.SelectSingleNode("/configuration/appSettings/add[@key='applicationDatabase']/@value");
-    $node.Value
+    end{}
 }
 
 function Get-TfsDeploymentServiceHost ($urlToCollection, $webConfigLocation) {
@@ -41,7 +50,7 @@ function Get-TfsDeploymentServiceHost ($urlToCollection, $webConfigLocation) {
     $deploymentHostProperties.ConnectionInfo = [Microsoft.TeamFoundation.Framework.Server.SqlConnectionInfoFactory]::Create($connStr, $null, $null);
     $deploymentHostProperties.HostType = [Microsoft.TeamFoundation.Framework.Server.TeamFoundationHostType]::Application -bor [Microsoft.TeamFoundation.Framework.Server.TeamFoundationHostType]::Deployment
     $dsh = New-Object 'Microsoft.TeamFoundation.Framework.Server.DeploymentServiceHost' -ArgumentList $deploymentHostProperties, $false
-    $dsh; $instanceId
+    $dsh; $instanceId;
 }
 
 function Get-TfsGetContext ($deploymentServiceHost, $instanceId){
@@ -63,6 +72,18 @@ function Invoke-TfsProvisionProjectFeatures ($context, $project){
     else
     {
       $projFeatProvDetails = $projFeatProvServ.ValidateProcessTemplates($context, $project.Uri)
+      $msgs = @()
+      foreach ($deet in $projFeatProvDetails){
+
+        foreach ($issue in $deet.Issues){
+            $msgs += $issue.Message
+        }
+        $msgs | % {Write-Host "IsValid: $($deet.IsValid) - Message: $_"}
+      }
+
+      
+
+      
       $validProcTempDetails = $projFeatProvDetails | ? {$_.IsValid}
       $numValidPTs = $validProcTempDetails.Count
 
@@ -71,7 +92,7 @@ function Invoke-TfsProvisionProjectFeatures ($context, $project){
         0 { 
             Write-Host "$project : No Valid Process Template found." 
             $project.Name; $project.Uri; "No Process Templates"; "Failed";
-        }
+          }
         1 { 
             $projectFeatureProvisioningDetail = $projFeatProvDetails[0]
             $ptName = $($projectFeatureProvisioningDetail.ProcessTemplateName)
@@ -83,7 +104,7 @@ function Invoke-TfsProvisionProjectFeatures ($context, $project){
             }catch{
                 $project.Name; $project.Uri; $ptName; "Error - $error";
             }
-        }
+          }
         default {
             Write-Host "$project : Multiple Valid Process Templates found."
             $validProcTempDetails | % { Write-Host "$_.ProcessTemplateName "} | Out-Null
@@ -97,7 +118,7 @@ Import-Module GenericMethods
 Import-TFS2013
 
 # Do a little Authentication to ensure we can do anything
-$configServer = [Microsoft.TeamFoundation.Client.TfsConfigurationServerFactory]::GetConfigurationServer("http://divcd83:8080/tfs")
+$configServer = [Microsoft.TeamFoundation.Client.TfsConfigurationServerFactory]::GetConfigurationServer("http://ditfssb01:8080/tfs")
 [void]$configServer.Authenticate()
 if(!$configServer.HasAuthenticated)
 {
@@ -108,8 +129,7 @@ else
 {
     Write-Host "Authenticated"
 
-    [string] $url = 'http://divcd83:8080/tfs/projectcollection01'
-    #[string] $webConfigLocation = "\\ditfssb01\c$\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services"
+    [string] $url = 'http://ditfssb01:8080/tfs/projectcollection02'
     [string] $webConfigLocation = 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\web.config'
     
     # create folder for logging artifacts
@@ -136,7 +156,3 @@ else
 
     $myDsh[0].Dispose()
 }
-
-
-
-

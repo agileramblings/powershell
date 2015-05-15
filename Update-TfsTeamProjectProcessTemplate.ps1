@@ -9,7 +9,7 @@ $myVar = @{
     "TFSUrl" = "http://ditfssb01:8080/tfs/";
     "TPC01" = "ProjectCollection01";  
     "TPC02" = "ProjectCollection02";  
-    "TPScrum" = "Scrum 2013.4";
+    "TPScrum" = "DocumentRouter";
     "ResultsDir" = "C:\TFS\Trial-Upgrade-Results\";
     "DefaultDir" = "Default_2013_Scrum\";
     "ImportableDir" = "Importable_2013_Scrum\";
@@ -18,7 +18,7 @@ $myVar = @{
 $myVar.GetEnumerator() | % { Write-Host $("{0}" -f $_.Key) -ForegroundColor Green -NoNewline; Write-Host $(" = {0}" -f $_.Value) -ForegroundColor Magenta }
 
 Write-Host "List of TP that require manual upgrade " -ForegroundColor Cyan
-$TPsToUpgrade = @(
+$OldAgileTPsToUpgrade = @(
      "(APM_CAR) APM - Calgary Awards Rewrite"
     ,"(APM_GCR) APM - General Current Reconcile"
     ,"(APM_ITSC) APM - IT Software Contracts"
@@ -41,11 +41,121 @@ $TPsToUpgrade = @(
     ,"Roads Asset Management"
 )
 
+$OldScrumTPsToUpgrade = @(
+ "(CDE) Census Data Entry"
+,"(CIAO-BA) Business Assessment into CIAO"
+,"(DSCTEST) DSC Test Repository"
+,"(LRT) LRT Relay"
+,"(OCS) Online Customer Service"
+,"(PTWeb) Property Tax on Web"
+,"CAAF"
+,"Test sfts v2"
+)
+
+$CMMI_TPs_To_Upgrade = @(
+ "(ABSS) Ambulance Billing Source System"
+,"(ACE) Access Calgary Extra"
+,"(AIM_WTS) AIM Work Request Tracking System"
+,"(ANP) Assessment Notice Print"
+,"(APEB) AP Enmax Batch"
+,"(APEFT) AP Electronic Funds Transfer"
+,"(APESV) AP Enmax Site Verification"
+,"(APM_APP_TEMPLATE) APM - Application Template"
+,"(APM_MF) APM - Master Form Catalog"
+,"(APM_SMS) APM - Secretariat Meeting Statistics"
+,"(APM_TLP) APM - Transit Lost Property"
+,"(ArcGIS) Server Services"
+,"(ArcGIS) Utilities"
+,"(ATPA) ARINC Train Performance Analysis"
+,"(BCC) Boards Commissions Committees"
+,"(BDS) Bylaw Debenture Integration"
+,"(BISINFO) Business Inventory System Information"
+,"(BOS) Bill of Sale"
+,"(Calgro IS) Calgro Information System"
+,"(CAM) Corporate Addressing and Mapping"
+,"(CARS) Contracts and Agreements Recording System"
+,"(CBET) Contextual Building Envelope Tool"
+,"(CEFAI) Calgarys Environmental Footprint Action Inventory"
+,"(CHALK) Chalkboard"
+,"(CLINKS) Housekeeping Scheduling System"
+,"(CLNDR) Calendar Web Service"
+,"(CM) CoreMapping"
+,"(CMA) Control Monuments Application"
+,"(CMS) Cemetery Management System"
+,"(CoCIS) City of Calgary Internet Site"
+,"(COL) City Online Rewrite"
+,"(COOL) Calgary Ownership OnLine"
+,"(COS) Calgary Online Store"
+,"(CPAL) Corp Prop Address Lookup"
+,"(CPDMS) Capital Projects Data Maintenance System"
+,"(CryptoConn) CryptoConn"
+,"(CWAM) Corporate Web Authentication Model"
+,"(DBASDM) DevBuildingApproval Spatial Data Management"
+,"(DHC) Discover Historic Calgary"
+,"(DMS) Debenture Management System"
+,"(DSC) Development Support Centre"
+,"(DSCommon) DevSupport Common"
+,"(DSDataLayer) DevSupport Data Layer"
+,"(DTR) Developers Test Repository"
+,"(EAI) Enterprise Application Integration"
+,"(EDIW) Enterprise Directory Internal Webservice"
+,"(ETIME) Electronic Time Project"
+,"(FAM) Fixing Addresses Manually"
+,"(FCL) Finance Codes Lookup"
+,"(FireRMS) Fire Record Management System"
+,"(FLTR) Fleet Training"
+,"(FMIS_MIIS) Employee Data Feed from MIIS to FMIS"
+,"(FRED) Footprint Reporting Environmental Data"
+,"(FSII) FCSS Social Inclusion Indicators"
+,"(ICollS) Integrated Collection System"
+,"(IdMEAS) IdM External Account Service"
+,"(ITWP) webwave"
+,"(LAT) Legacy Application Transfer"
+,"(LI) Local Improvement Replacement Project"
+,"(LINDA) Land Inventory Data Application)"
+,"(LIPS) Low Income Pass System"
+,"(LRVTB) LRV Tracking Board"
+,"(LTIR) Land Title Information Reports"
+,"(MAF) Mailing Address Formatter"
+,"(MSPS) MS Project Server"
+,"(MTS) Mail Tracking System"
+,"(NESAA) IdM Non-Employee System of Record"
+,"(PARIS) PARIS_Launcher"
+,"(PARIS) PARIS_Reports"
+,"(PMR) PM Routes"
+,"(RACE) Reporting and Analysis"
+,"(RB) Retiree Benefits"
+,"(RD) Road Detours"
+,"(SNAG) Subdivision Notice of Appeal Generator"
+,"(STAR) Staff Directory Tabular Access and Standard Reports"
+,"(SWB) Solid Waste Billing"
+,"(TAP) Temporary Administration Privileges"
+,"(TAR) IT Temporary Asset Register"
+,"(TCM) Transparent Cost Model"
+,"(TEMPS) Temp Employment Management"
+,"(TG) Trip Generation"
+,"(TP) Triangle Project"
+,"(TRFCNT) Traffic Counts"
+,"(UDRS) Urban Development Reporting System"
+,"(ULA) Utility Line Assignments"
+,"(VAMIS) Vendor Account Management Information System"
+,"(WBOR) Water Billing Operational Repository"
+,"(WRSM) Waste and Recycling Service Management"
+,"(WSA) Windows Server Administration"
+,"Eclipse Test Project01"
+,"M5 Reporting"
+,"Management Dashboard"
+,"Management Dashboard Sustainment"
+,"myCity"
+,"Remedy 7"
+)
+
 # Won't be able to do this - leave in for instruction sake
 # Invoke-Command -ComputerName divcd163 -ScriptBlock { TFSBackup -i "PISQLSK801\TFSPD" -l "\\exchange\exchange\TFS_Migration" }
 # Invoke-Command -ComputerName divcd163 -ScriptBlock { TfsRestore -i "DIVCD163" -l "\\exchange\exchange\TFS_Migration" }
 
-$TPsToUpgrade | % { Write-Host $_ -ForegroundColor Cyan }
+$scorchAndReplaceTPList = $OldAgileTPsToUpgrade + $OldScrumTPsToUpgrade
+$scorchAndReplaceTPList | % { Write-Host $_ -ForegroundColor Cyan }
 
 $folder = New-Folder $myVar.ResultsDir
 $defaultDir = New-Folder $($myVar.ResultsDir + $myVar.DefaultDir)
@@ -75,7 +185,7 @@ $exportedCats.CATEGORIES.RemoveAll()
 $exportedCats.Save("$($myVar.ResultsDir + $myVar.ImportableDir)Empty_categories.xml")
 
 $configServer = gtfs $myVar.TfsUrl $myVar.TFSVersion
-foreach ($tp in $TPsToUpgrade){
+foreach ($tp in $scorchAndReplaceTPList){
 
     #get work item types from TP
     Write-Host "Get all Work Item Templates from $tp" -ForegroundColor Yellow
@@ -109,6 +219,33 @@ foreach ($tp in $TPsToUpgrade){
 
     Write-Host "$tp should now be ready for an upgrade" -ForegroundColor Green
 }
+
+#get Requirement WITD
+[xml]$orgReg = witadmin exportwitd /collection:"http://ditfssb01:8080/tfs/ProjectCollection01" /p:"(ABSS) Ambulance Billing Source System" /n:"Requirement" /f:"C:\Temp\Test\Requirement.xml"
+
+#modify it slightly 
+# <FIELD name="Stack Rank" refname="Microsoft.VSTS.Common.StackRank" type="Double" />
+$newStackRank = $orgReq.CreateElement("FIELD")
+$newStackRank.SetAttribute('name','Stack Rank')
+$newStackRank.SetAttribute('refname','Microsoft.VSTS.Common.StackRank')
+$newStackRank.SetAttribute('type','Double')
+$orgReq.WITD.WORKITEMTYPE.FIELDS.AppendChild($newStackRank)
+
+# <FIELD name="Size" refname="Microsoft.VSTS.Scheduling.Size" type="Integer" />
+$newSize = $orgReq.CreateElement("FIELD")
+$newSize.SetAttribute('name','Size')
+$newSize.SetAttribute('refname','Microsoft.VSTS.Scheduling.Size')
+$newSize.SetAttribute('type','Integer')
+$orgReq.WITD.WORKITEMTYPE.FIELDS.AppendChild($newSize)
+$orgReq.Save($($myVar.ResultsDir + "NewReq.xml"))
+
+foreach ($tp in $CMMI_TPs_To_Upgrade)
+{
+   #import in tweaked requirement WITD
+   witadmin importwitd /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$tp  /f:"$($myVar.ResultsDir + "NewReq.xml")"
+}
+
+
 
 #upgrade TP
 
