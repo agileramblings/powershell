@@ -80,9 +80,6 @@ function Invoke-TfsProvisionProjectFeatures ($context, $project){
         }
         $msgs | % {Write-Host "IsValid: $($deet.IsValid) - Message: $_"}
       }
-
-      
-
       
       $validProcTempDetails = $projFeatProvDetails | ? {$_.IsValid}
       $numValidPTs = $validProcTempDetails.Count
@@ -114,45 +111,62 @@ function Invoke-TfsProvisionProjectFeatures ($context, $project){
    }
 }
 
+function Update-TfsTeamProjectFeatureConfiguration()
+{
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory=$true)]
+        [string]$tpcUrl
+    )
+    begin{}
+    process{
+        # Do a little Authentication to ensure we can do anything
+        $configServer = [Microsoft.TeamFoundation.Client.TfsConfigurationServerFactory]::GetConfigurationServer("http://ditfssb01:8080/tfs")
+        [void]$configServer.Authenticate()
+        if(!$configServer.HasAuthenticated)
+        {
+            Write-Host "Not Authenticated"
+            exit
+        }
+        else
+        {
+            Write-Host "Authenticated"
+
+            [string[]] $urls = @('http://ditfssb01:8080/tfs/projectcollection01', 'http://ditfssb01:8080/tfs/projectcollection02')
+            [string] $webConfigLocation = 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\web.config'
+    
+            # create folder for logging artifacts
+            if (!(Test-Path -Path C:\TFS\Results\)){
+                $null = New-Item -ItemType directory -Path C:\TFS\Results\
+            } else {
+                #clean out the folder 
+                Remove-Item C:\TFS\Results\PT_Upgrade_Log.csv -Force -ErrorAction SilentlyContinue
+            }
+
+#            foreach($url in $urls)
+#            {
+                $myDsh = Get-TfsDeploymentServiceHost $tpcUrl $webConfigLocation
+                $ctx = Get-TfsGetContext $myDsh[0] $myDsh[1]
+                # get "Microsoft.TeamFoundation.Server.CommonStructureService" service
+                $css = Invoke-GenericMethod -InputObject $ctx -MethodName GetService -GenericType 'Microsoft.TeamFoundation.Integration.Server.CommonStructureService'
+                foreach($proj in $css.GetWellFormedProjects($ctx)){
+                    $retVal = Invoke-TfsProvisionProjectFeatures $ctx $proj
+
+                    #put retVal into csv
+                    $values = $(Get-Date -Format g), $tpcUrl
+                    $values += $retVal
+                    $csvLine = [string]::Join(",", $values)
+                    $csvLine >> "C:\TFS\Results\PT_Upgrade_Log.csv";
+                }
+
+                $myDsh[0].Dispose()
+#            }
+        }
+    }
+    end{}
+}
+
 Import-Module GenericMethods
 Import-TFS2013
-
-# Do a little Authentication to ensure we can do anything
-$configServer = [Microsoft.TeamFoundation.Client.TfsConfigurationServerFactory]::GetConfigurationServer("http://ditfssb01:8080/tfs")
-[void]$configServer.Authenticate()
-if(!$configServer.HasAuthenticated)
-{
-    Write-Host "Not Authenticated"
-    exit
-}
-else
-{
-    Write-Host "Authenticated"
-
-    [string] $url = 'http://ditfssb01:8080/tfs/projectcollection02'
-    [string] $webConfigLocation = 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\web.config'
-    
-    # create folder for logging artifacts
-    if (!(Test-Path -Path C:\TFS\Results\)){
-        $null = New-Item -ItemType directory -Path C:\TFS\Results\
-    } else {
-        #clean out the folder 
-        Remove-Item C:\TFS\Results\PT_Upgrade_Log.csv -Force -ErrorAction SilentlyContinue
-    }
-
-    $myDsh = Get-TfsDeploymentServiceHost $url $webConfigLocation
-    $ctx = Get-TfsGetContext $myDsh[0] $myDsh[1]
-    # get "Microsoft.TeamFoundation.Server.CommonStructureService" service
-    $css = Invoke-GenericMethod -InputObject $ctx -MethodName GetService -GenericType 'Microsoft.TeamFoundation.Integration.Server.CommonStructureService'
-    foreach($proj in $css.GetWellFormedProjects($ctx)){
-        $retVal = Invoke-TfsProvisionProjectFeatures $ctx $proj
-
-        #put retVal into csv
-        $values = $(Get-Date -Format g), $url
-        $values += $retVal
-        $csvLine = [string]::Join(",", $values)
-        $csvLine >> "C:\TFS\Results\PT_Upgrade_Log.csv";
-    }
-
-    $myDsh[0].Dispose()
-}
+Set-Tfs2013
+Update-TfsTeamProjectFeatureConfiguration 'http://ditfssb01:8080/tfs/projectcollection02'

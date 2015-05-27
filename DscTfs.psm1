@@ -35,10 +35,6 @@ function New-Folder() {
         [string]$folderPath
     )
     process {
-        $length = $folderPath.Length
-        if ($folderPath[$length-1] -ne "\") {
-            $folderPath += "\"
-        }
         if (!(Test-Path -Path $folderPath)){
             New-Item -ItemType directory -Path $folderPath
         } else {
@@ -264,7 +260,7 @@ function Backup-TfsWorkItems() {
 #>
     [CmdLetBinding()]
     param(
-        [parameter(Mandatory = $true, ValueFromPipeLine = $true)]
+        [parameter(Mandatory = $true)]
         [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
         [parameter(Mandatory = $true)]
         [string]$tpcName,
@@ -590,8 +586,6 @@ function Update-TfsWorkItemTemplate() {
             $template = $template | % { $_ -replace "Attached File Count", "AttachedFileCount" }
             $template = $template | % { $_ -replace "Hyperlink Count", "HyperLinkCount" }
             $template = $template | % { $_ -replace "Related Link Count", "RelatedLinkCount" }
-
-            #$template = $template | % { $_ -replace "Hyperlink Count", "HyperLinkCount" }
             # END ADDITIONAL REPLACEMENTS 
 
             $template | % {$_ -replace "Area ID", "AreaID" } > "$targetName" 

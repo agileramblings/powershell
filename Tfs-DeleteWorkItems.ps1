@@ -17,7 +17,7 @@ Import-TFSAssemblies_2013
 
 Clear-Host
 
-$configServer = [Microsoft.TeamFoundation.Client.TfsConfigurationServerFactory]::GetConfigurationServer("http://divcd83:8080/tfs")
+$configServer = [Microsoft.TeamFoundation.Client.TfsConfigurationServerFactory]::GetConfigurationServer("http://ditfssb01:8080/tfs")
 [void]$configServer.Authenticate()
 if(!$configServer.HasAuthenticated)
 {
