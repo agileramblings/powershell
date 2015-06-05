@@ -1,3 +1,5 @@
+#Get-TfsConfigServer "http://divcd83:8080/tfs" "2013.4" | Get-TfsTeamProjectCollectionAnalysis -Folder "C:\temp\Test_Analysis" -Verbose 4> "C:\Temp\Analysis_log.txt"
+
 Write-Host "Loading DscTfs Module"
 
 function Import-TFSAssemblies_2010 {
@@ -356,7 +358,6 @@ function Remove-TfsWorkItems() {
         [parameter(Mandatory = $true)]
         [string] $witType,
         [parameter(Mandatory = $false)]
-        [AllowEmptyString]
         [string] $titleTextContains)
 
     begin{}
@@ -404,7 +405,7 @@ function Remove-TfsWorkItems() {
                 }
                 Write-Verbose "$($tp.Name) - $witType WI Destroyed: $($idList.Count)"
             }
-            Write-Verbose "Total WI Destroyed: $totalWIDestroyed" -foregroundcolor Yellow
+            Write-Verbose "Total WI Destroyed: $totalWIDestroyed"
         }
     }
 
@@ -467,7 +468,7 @@ function Remove-TfsWorkItemTemplate() {
 
             if (!$tpc.Name.ToLower().Contains(([string]$($tpcName)).ToLower())) { continue }
 
-            Write-Verbose "Preparing to destroy WIT in TeamProjectCollection $($tpc.Name) - $($witType)" -foregroundcolor Yellow
+            Write-Verbose "Preparing to destroy WIT in TeamProjectCollection $($tpc.Name) - $($witType)" 
                 
             #Get WorkItemStore
             $wiService = New-Object "Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore" -ArgumentList $tpc
@@ -546,6 +547,69 @@ function Import-TfsWorkItemTemplate() {
     }
     end{}
 }
+function Find-TfsFieldDescription{
+
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [string] $tpcName,
+        [parameter(Mandatory = $true)]
+        [string] $refNameContains
+        )
+
+    begin {}
+    process {
+        $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
+        $arrayEntries = witadmin listfields /collection:$tpcUrl
+        $fieldRefList = $arrayEntries | ? {$_.Contains($refnameContains) -and $_.Contains("Field:")}
+        $allFields = @();
+        foreach($field in $fieldRefList){
+            $indexOfField = [array]::indexOf($arrayEntries, $field)
+            $listOfValues = @{}
+            $fieldEntries = $arrayEntries | Select-Object -Skip $indexOfField | Select-Object -First 7 | % { $_.Trim()}
+            foreach($line in $fieldEntries)
+            {
+                if ([string]::IsNullOrEmpty($line)) {continue;}
+                $listOfValues.Add($line.split(":")[0].Trim(), $line.split(":")[1].Trim())
+            }
+            $allFields += $listofValues
+        }
+        $allFields;
+    }
+    end {}
+}
+
+
+function Update-TfsFieldNames {
+
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [string] $tpcName
+        )
+
+    begin {}
+    process {
+        $fieldsToRename = @()
+        $fieldsToRename += @{"Name" = "Hyperlink Count"; "Refname" = "System.HyperLinkCount"};
+        $fieldsToRename += @{"Name" = "External Link Count"; "Refname" = "System.ExternalLinkCount"};
+        $fieldsToRename += @{"Name" = "Related Link Count"; "Refname" = "System.RelatedLinkCount"};
+        $fieldsToRename += @{"Name" = "Attached File Count"; "Refname" = "System.AttachedFileCount"};
+        $fieldsToRename += @{"Name" = "Area ID"; "Refname" = "System.AreaId"};
+        $fieldsToRename += @{"Name" = "Iteration ID"; "Refname" = "System.IterationId"};
+
+        $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
+        foreach($field in $fieldsToRename)
+        { 
+            witadmin changefield /collection:$tpcUrl /n:"$($field.Refname)" /name:"$($field.Name)" /noprompt 
+        }
+    }
+    end {}
+}
 
 function Update-TfsWorkItemTemplate() {
 <# 
@@ -577,14 +641,15 @@ function Update-TfsWorkItemTemplate() {
         $files = Get-ChildItem -path $sourcePath
         foreach ($file in $files){
             $sourceName = $file.FullName
-            $targetName = $targetPath + $file.Name
+
+            $tDir = Get-Item -Path $targetPath
+            $targetName = Join-Path -Path $tDir -ChildPath $file.Name
             $template = cat $sourceName| % {$_ -replace "Iteration ID", "IterationID"}
 
             # INSERT ADDITIONAL REPLACEMENTS HERE
             $template = $template | % { $_ -replace "External Link Count", "ExternalLinkCount" }
             $template = $template | % { $_ -replace "Hyperlink Count", "HyperLinkCount" }
             $template = $template | % { $_ -replace "Attached File Count", "AttachedFileCount" }
-            $template = $template | % { $_ -replace "Hyperlink Count", "HyperLinkCount" }
             $template = $template | % { $_ -replace "Related Link Count", "RelatedLinkCount" }
             # END ADDITIONAL REPLACEMENTS 
 
@@ -745,12 +810,58 @@ function Get-TfsTeamProjectCollectionAnalysis() {
     }
 }
 
-Set-Alias gh Get-Hash
+function Save-TfsCleanedWITD(){
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [xml]$witd,
+        [parameter(Mandatory=$true)]
+        [alias("Folder")]
+        [string]$exportRoot, 
+        [parameter(Mandatory=$false)]
+        [Alias("Prefix")]
+        [string]$pre
+    )
+
+    begin{ }
+    process {
+        $exportFolder = New-Folder $exportRoot
+
+        Write-Verbose "Cleaning up WITD xml"
+        Write-Verbose "Removing some nodes that cause fingerprinting problems but not a meaningful difference"
+        Remove-Nodes $witd "//SUGGESTEDVALUES"
+        Remove-Nodes $witd "//VALIDUSER"
+        Remove-Nodes $witd "//comment()"
+
+        Write-Verbose "Sorting all of the fields by name"
+        $fields = $witd.WITD.WORKITEMTYPE.FIELDS
+        $sortedFields = $fields.FIELD | Sort Name
+
+        Write-Verbose "Sorting all of the fields children alphabetically"
+        foreach($field in $sortedFields){
+        Switch-ChildNodes $field
+        }
+
+        Write-Verbose "Converting all field elements to non-self closing elemenets"
+        $sortedFields | % {$_.AppendChild($_.OwnerDocument.CreateTextNode("")) }| Out-Null
+
+        Write-Verbose "Replacing original field nodelist with sorted field node list" 
+        [void]$fields.RemoveAll()
+        $sortedFields | foreach { $fields.AppendChild($_) } | Out-Null
+
+        Write-Verbose "Save a copy of the un-compressed wit for manual comparisons"
+        $fileLocation = $exportRoot + "$($pre + $witd.WITD.WORKITEMTYPE.name).xml"
+        Write-Verbose "File location: $fileLocation"
+        [void]$witd.Save($fileLocation)
+    }
+}
+
+Set-Alias gh Get-Hashtfpt
 Set-Alias gtfs Get-TfsConfigServer
 
 Export-ModuleMember -Alias *
 Export-ModuleMember -Function "New-Folder", "Get-Hash", "Switch-ChildNodes", "Remove-Nodes"
 Export-ModuleMember -Function "Get-TfsConfigServer", "Get-TfsTeamProjectCollectionIds"
 Export-ModuleMember -Function "Backup-TfsWorkItems", "Remove-TfsWorkItems", "Remove-TfsWorkItemTemplate", "Import-TfsWorkItemTemplate", "Update-TfsWorkItemTemplate"
-Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis"
+Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis", "Update-TfsFieldNames", "Find-TfsFieldDescription", "Save-TfsCleanedWITD"
 

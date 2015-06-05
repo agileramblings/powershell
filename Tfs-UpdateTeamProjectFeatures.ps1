@@ -169,4 +169,5 @@ function Update-TfsTeamProjectFeatureConfiguration()
 Import-Module GenericMethods
 Import-TFS2013
 Set-Tfs2013
-Update-TfsTeamProjectFeatureConfiguration 'http://ditfssb01:8080/tfs/projectcollection02'
+Update-TfsTeamProjectFeatureConfiguration "http://ditfssb01:8080/tfs/projectcollection02"
+Update-TfsTeamProjectFeatureConfiguration "http://ditfssb01:8080/tfs/projectcollection01"

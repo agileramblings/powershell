@@ -189,7 +189,7 @@ function Make-PSDrive(){
         $d = Get-PSDrive | ? { $_.name -eq $name}
         if ($d -eq $null)
         {
-            New-PSDrive $name -PSProvider FileSystem -Root $root
+            New-PSDrive $name -PSProvider FileSystem -Root $root -Scope Global 
         }
     }
     end{}

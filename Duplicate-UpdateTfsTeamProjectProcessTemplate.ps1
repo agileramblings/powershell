@@ -3,16 +3,23 @@ Clear-Host
 
 Set-Tfs2013
 
-#setup global variaables
+###### Clean up all the work items that are noisey before we do anything
+.\Clean-TfsWorkItems.ps1
+
+###### Setup global variaables
 Write-Host "Building Global Variables list" -ForegroundColor Magenta
 $myVar = @{ 
     "TFSUrl" = "http://ditfssb01:8080/tfs/";
     "TPC01" = "ProjectCollection01";  
     "TPC02" = "ProjectCollection02";  
-    "TPScrum" = "DocumentRouter";
-    "ResultsDir" = "C:\TFS\Trial-Upgrade-Results";
-    "DefaultDir" = "Default_2013_Scrum";
-    "ImportableDir" = "Importable_2013_Scrum";
+    "TPScrum" = "(SAMPLE) Scrum 2013.4";
+    "TPAgile" = "(SAMPLE) Agile 2013.4";
+    "TPCMMI"  = "(SAMPLE) CMMI 2013.4";
+    "ResultsDir" = "C:\TFS\FullTrial-Upgrade-Results";
+    "DefaultDir" = "WITD_Templates";
+    "ScrumDir" = "Scrum";
+    "AgileDir" = "Agile";
+    "CMMIDir" = "CMMI";
     "TFSVersion" = "2013.4";
 }
 $myVar.GetEnumerator() | % { Write-Host $("{0}" -f $_.Key) -ForegroundColor Green -NoNewline; Write-Host $(" = {0}" -f $_.Value) -ForegroundColor Magenta }
@@ -39,7 +46,7 @@ $OldAgileTPsToUpgrade = @(
     ,"CIAO Reporting"
     ,"Reuse Library"
     ,"Roads Asset Management"
-    ,"eServiceFeeEstimator"
+    ,"eServicesFeeEstimator"
 )
 
 $OldScrumTPsToUpgrade = @(
@@ -151,118 +158,113 @@ $CMMI_TPs_To_Upgrade = @(
 ,"Remedy 7"
 )
 
-# Won't be able to do this - leave in for instruction sake
-# Invoke-Command -ComputerName divcd163 -ScriptBlock { TFSBackup -i "PISQLSK801\TFSPD" -l "\\exchange\exchange\TFS_Migration" }
-# Invoke-Command -ComputerName divcd163 -ScriptBlock { TfsRestore -i "DIVCD163" -l "\\exchange\exchange\TFS_Migration" }
+$CMMI_TPs_To_Upgrade_TPC02 = @(
+ "(FCSWS) Family Community Survey Web Service"
+,"(GP) Glacier Project"
+,"(POWS) Property Ownership Web Service"
+,"(LABC) Labour Action Business Continuity"
+)
 
-$scorchAndReplaceTPList = $OldAgileTPsToUpgrade + $OldScrumTPsToUpgrade
-$scorchAndReplaceTPList | % { Write-Host $_ -ForegroundColor Cyan }
+###### Ge ConfigServer (authenticate) and setup TPC urls
+$configServer = gtfs $myVar.TfsUrl $myVar.TFSVersion
+$tpc01Url = $($myVar.TFSUrl + $myVar.TPC01)
+$tpc02Url = $($myVar.TFSUrl + $myVar.TPC02)
 
+###### CMMI Team Project Upgrade in TPC01
+Update-TfsFieldNames $configServer $myVar.TPC01
+
+## create the three new team projects
+tfpt createteamproject /collection:$tpc01Url /teamproject:"(SAMPLE) CMMI 2013.4" /processtemplate:"MSF for CMMI Process Improvement 2013.4" /sourcecontrol:None /noreports /noportal
+tfpt createteamproject /collection:$tpc01Url /teamproject:"(SAMPLE) Scrum 2013.4" /processtemplate:"Microsoft Visual Studio Scrum 2013.4" /sourcecontrol:None /noreports /noportal
+tfpt createteamproject /collection:$tpc01Url /teamproject:"(SAMPLE) Agile 2013.4" /processtemplate:"MSF for Agile Software Development 2013.4" /sourcecontrol:None /noreports /noportal
+
+###### Build Folder Structure
 $folder = New-Folder $myVar.ResultsDir
 $defaultDir = Join-Path -Path $folder -ChildPath $myVar.DefaultDir | New-Folder 
-$importableDir = Join-Path -Path $folder -ChildPath $myVar.ImportableDir | New-Folder
 
-##delete WITD and categories files between runs
-#Remove-Item "$defaultDir\*"
-#Remove-Item "$importableDir\*"
-#
-##export work items from Scrum
-#Write-Host "Getting WITD List for Scrum 2013.4 Process Template" -ForegroundColor Yellow
-#$canonicalScrumWITD = witadmin listwitd /collection:$($myVar.TFSUrl + $myVar.TPC02) /p:$($myVar.TPScrum)
-#$canonicalScrumWITD | % { witadmin exportwitd /collection:$($myVar.TFSUrl + $myVar.TPC02) /p:$($myVar.TPScrum) /n:"$($_)" /f:"$defaultDir\$_.xml" }
-#
-##transform Scrum WITD so they will import
-#Write-Host "Transforming WITD so they will Import" -ForegroundColor Yellow
-#Update-TfsWorkItemTemplate $defaultDir $importableDir
-#
-##export categories for scrum
-#Write-Host "Getting Categories from Scrum 2013.4 Process Template" -ForegroundColor Yellow
-#witadmin exportcategories /collection:$($myVar.TFSUrl + $myVar.TPC02) /p:$($myVar.TPScrum) /f:"$($importableDir)categories.xml"
-#
-##create empty categories file
-#Write-Host "Creating Emtpy Categories files..." -ForegroundColor Yellow
-#[xml]$exportedCats = Get-Content -Path "$($importableDir)categories.xml"
-#$exportedCats.CATEGORIES.RemoveAll()
-#$exportedCats.Save("$($importableDir)Empty_categories.xml")
-#
-#$configServer = gtfs $myVar.TfsUrl $myVar.TFSVersion
-#foreach ($tp in $scorchAndReplaceTPList){
-#
-#    #get work item types from TP
-#    Write-Host "Get all Work Item Templates from $tp" -ForegroundColor Yellow
-#    $currentTPWITList = witadmin listwitd /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp)
-#    
-#    Write-host "Backing up work items from $tp" -ForegroundColor Green
-#    Write-Host "Deleting all Work Items from $tp" -ForegroundColor Red
-#    #Delete All Work Items from Target TP
-#    foreach($wit in $currentTPWITList){
-#        Backup-TfsWorkItems $configServer $($myVar.TFSUrl + $myVar.TPC01) $tp $wit $folder
-#        Remove-TfsWorkItems $configServer $myVar.TPC01 $tp $wit
-#    }
-#    
-#    #Change Categories to be empty
-##    Write-Host "Changing all Categories to be empty in $tp" -ForegroundColor Red
-##    $tpName = "$($tp)"
-##    $fileName = "$($importableDir)Empty_categories.xml"
-##    $tfsUrl = $($myVar.TFSUrl + $myVar.TPC01)
-##    witadmin importcategories /collection:$tfsUrl /p:$tpName /f:$fileName
-#
-#    #Delete WITD
-##    Write-Host "Destroying all WITD in $tp" -ForegroundColor Red
-##    foreach($wit in $currentTPWITList){
-##        Remove-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $wit
-##    }
-#
-#    #Import new Scrum WITD
-#    Write-Host "Importing new Scrum 2013.4 WITD into $tp" -ForegroundColor Yellow
-#    Import-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $importableDir
-#    
-#    #import new categories for Scrum
-#    Write-Host "Importing Scrum 2013.4 Categories into $tp" -ForegroundColor Yellow
-#    witadmin importcategories /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp) /f:"$($importableDir)categories.xml"
-#
-#    Write-Host "$tp should now be ready for an upgrade" -ForegroundColor Green
-#}
+###### delete WITD and categories files between runs
+Remove-Item "$defaultDir\*" -Recurse
 
-#get Requirement WITD
-[xml]$orgReg = witadmin exportwitd /collection:"http://ditfssb01:8080/tfs/ProjectCollection01" /p:"Remedy 7" /n:"Requirement"
+###### Recreate child folders
+$scrumDir = Join-Path -Path $defaultDir -ChildPath $myVar.ScrumDir | New-Folder 
+$agileDir = Join-Path -Path $defaultDir -ChildPath $myVar.AgileDir | New-Folder 
+$CMMIDir = Join-Path -Path $defaultDir -ChildPath $myVar.CMMIDir | New-Folder 
 
-#if necessary modify it slightly 
-$stNode = $($orgReg.WITD.WORKITEMTYPE.FIELDS.FIELD | ? {$_.Name -eq "Stack Rank"})
-if ( $stNode -ne $null) {
-    $orgReg.WITD.WORKITEMTYPE.FIELDS.RemoveChild($stNode)
+Write-Host "Getting WITD List for Scrum 2013.4 Process Template" -ForegroundColor Yellow
+$defaultScrumWITD = witadmin listwitd /collection:$tpc01Url /p:$($myVar.TPScrum)
+$defaultAgileWITD = witadmin listwitd /collection:$tpc01Url /p:$($myVar.TPAgile)
+$defaultCMMIWITD = witadmin listwitd /collection:$tpc01Url /p:$($myVar.TPCMMI)
+                                                 
+###### Get WITD files from Templates
+foreach($witdName in $defaultScrumWITD)
+{ 
+    witadmin exportwitd /collection:$tpc01Url /p:$($myVar.TPScrum) /n:"$($witdName)" /f:"$scrumDir\$witdName.xml" 
 }
-$szNode = $($orgReg.WITD.WORKITEMTYPE.FIELDS.FIELD | ? {$_.Name -eq "Size"})
-if ( $szNode -ne $null) {
-    $orgReg.WITD.WORKITEMTYPE.FIELDS.RemoveChild($szNode)
+foreach($witdName in $defaultAgileWITD)
+{ 
+    witadmin exportwitd /collection:$tpc01Url /p:$($myVar.TPAgile) /n:"$($witdName)" /f:"$agileDir\$witdName.xml" 
+}
+foreach($witdName in $defaultCMMIWITD)
+{ 
+    witadmin exportwitd /collection:$tpc01Url /p:$($myVar.TPCMMI) /n:"$($witdName)" /f:"$CMMIDir\$witdName.xml" 
 }
 
-# <FIELD name="Stack Rank" refname="Microsoft.VSTS.Common.StackRank" type="Double" />
-$newStackRank = $orgReg.CreateElement("FIELD")
-$newStackRank.SetAttribute('name','Stack Rank')
-$newStackRank.SetAttribute('refname','Microsoft.VSTS.Common.StackRank')
-$newStackRank.SetAttribute('type','Double')
-$newStackRank.SetAttribute('reportable','dimension')
-$orgReg.WITD.WORKITEMTYPE.FIELDS.AppendChild($newStackRank)
-
-# <FIELD name="Size" refname="Microsoft.VSTS.Scheduling.Size" type="Integer" />
-$newSize = $orgReg.CreateElement("FIELD")
-$newSize.SetAttribute('name','Size')
-$newSize.SetAttribute('refname','Microsoft.VSTS.Scheduling.Size')
-$newSize.SetAttribute('type','Integer')
-$newSize.SetAttribute('reportable','measure')
-$newSize.SetAttribute('formula','sum')
-$orgReg.WITD.WORKITEMTYPE.FIELDS.AppendChild($newSize)
-$orgReg.Save("$($folder)NewReq.xml")
+###### export categories for process templates
+Write-Host "Getting Categories from 2013.4 Process Templates" -ForegroundColor Yellow
+$scrumCat = Join-Path -Path $scrumDir -ChildPath categories.xml
+witadmin exportcategories /collection:$tpc01Url /p:$($myVar.TPScrum) /f:"$scrumCat"
+$agileCat = Join-Path -Path $agileDir -ChildPath categories.xml
+witadmin exportcategories /collection:$tpc01Url /p:$($myVar.TPAgile) /f:"$agileCat"
+$cmmiCat = Join-Path -Path $CMMIDir -ChildPath categories.xml
+witadmin exportcategories /collection:$tpc01Url /p:$($myVar.TPCMMI) /f:"$cmmiCat"
 
 foreach ($tp in $CMMI_TPs_To_Upgrade)
 {
    #import in tweaked requirement WITD
-   Write-Host "Importing $($folder)NewReq.xml into $($tp)"
-   witadmin importwitd /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp) /f:"$($folder)NewReq.xml"
+   Write-Host "Importing new CMMI 2013.4 WITD into $tp" -ForegroundColor Yellow
+   Import-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $CMMIDir
+   witadmin importcategories /collection:$tpc01Url /p:$($tp) /f:"$cmmiCat"
 }
 
+###### CMMI Team Project Upgrade in TPC02
+foreach ($tp in $CMMI_TPs_To_Upgrade_TPC02)
+{
+   #import in tweaked requirement WITD
+   Write-Host "Importing new CMMI 2013.4 WITD into $tp" -ForegroundColor Yellow
+   Import-TfsWorkItemTemplate $configServer $myVar.TPC02 $tp $CMMIDir
+   witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$cmmiCat"
+}
 
+###### Old Scrum and Agile Upgrade/Conversion
+$scorchAndReplaceTPList = $OldAgileTPsToUpgrade + $OldScrumTPsToUpgrade
+$scorchAndReplaceTPList | % { Write-Host $_ -ForegroundColor Cyan }
+foreach ($tp in $scorchAndReplaceTPList){
 
-#upgrade TP
+    #get work item types from TP
+    Write-Host "Get all Work Item Templates from $tp" -ForegroundColor Yellow
+    $currentTPWITList = witadmin listwitd /collection:$($myVar.TFSUrl + $myVar.TPC01) /p:$($tp)
+    
+    Write-host "Backing up work items from $tp" -ForegroundColor Green
+    Write-Host "Deleting all Work Items from $tp" -ForegroundColor Red
+    #Delete All Work Items from Target TP
+    foreach($wit in $currentTPWITList){
+        Backup-TfsWorkItems $configServer $tpc01Url $tp $wit $folder
+        Remove-TfsWorkItems $configServer $myVar.TPC01 $tp $wit
+    }
+    
+    #Delete WITD
+    Write-Host "Destroying all WITD in $tp" -ForegroundColor Red
+    foreach($wit in $currentTPWITList){
+        Remove-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $wit
+    }
 
+    #Import new Scrum WITD
+    Write-Host "Importing new Scrum 2013.4 WITD into $tp" -ForegroundColor Yellow
+    Import-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $scrumDir
+    
+    #import new categories for Scrum
+    Write-Host "Importing Scrum 2013.4 Categories into $tp" -ForegroundColor Yellow
+    witadmin importcategories /collection:$tpc01Url /p:$($tp) /f:"$scrumCat"
+
+    Write-Host "$tp should now be ready for an feature configuration on 2013.4" -ForegroundColor Green
+}
