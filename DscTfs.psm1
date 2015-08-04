@@ -1300,6 +1300,95 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
    end{}
 }
 
+function Request-TfsXAMLBuild(){
+    [CmdLetBinding(SupportsShouldProcess=$true)]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $false)]
+        [alias("TPC", "TeamProjectCollection")]
+        [string]$tpcName,
+        [parameter(Mandatory = $false)]
+        [alias("TP", "TeamProject", "Project")]
+        [string]$tpName,
+        [parameter(Mandatory = $false)]
+        [alias("Build")]
+        [string]$buildName
+    )
+   begin {}
+   process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$tpc.Name.Contains($tpcName)) ) { continue; }
+
+            $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
+ 
+            #Get WorkItemStore
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
+            #Get a list of TeamProjects
+            $tps = $wiService.Projects
+
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                if( ![string]::IsNullorWhiteSpace($tpName) -and (!$tp.Name.Contains($tpName)) ) { continue;}
+
+                $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
+                               
+                [array]$bdefs = ,
+                [array]$actions = @(, @())
+                foreach ($bdef in $buildDefinitionList)
+                {
+                    if( ![string]::IsNullorWhiteSpace($buildName) -and ($buildName -ne $bdef.Name) ) { continue;}
+                    
+                    $queuedBuild = $null
+                    
+                    if (!$WhatIfPreference) {
+                        $queuedBuild = $bs.QueueBuild($bdef)
+                        $queuedBuild.WaitForBuildStart()
+                    } else {
+                        Write-Host "The build defintion " -NoNewline
+                        Write-Host $bdef.Name -ForegroundColor Yellow -NoNewline
+                        Write-Host " in Team Prorject " -NoNewline
+                        Write-Host $tp.Name -ForegroundColor Magenta -NoNewline
+                        Write-Host " in Team Project Collection " -NoNewline
+                        Write-Host $tpc.Name -ForegroundColor Red -NoNewline
+                        Write-Host " would have been started."
+                    }
+
+                    if ($queuedBuild -ne $null)
+                    {
+                        $buildUri = $queuedBuild.Build.Uri
+
+                        $buildFinished = $false;
+                        $i = 0;
+                        while ($buildFinished -eq $false)
+                        {
+                            $inProgressBuild = $bs.GetBuild($buildUri)
+                            if (($inProgressBuild.Status -eq [Microsoft.TeamFoundation.Build.Client.BuildStatus]::Failed) -or
+                                ($inProgressBuild.Status -eq [Microsoft.TeamFoundation.Build.Client.BuildStatus]::PartiallySucceeded) -or
+                                ($inProgressBuild.Status -eq [Microsoft.TeamFoundation.Build.Client.BuildStatus]::Succeeded))
+                            {
+                                $buildFinished = $true;
+                                Write-Host "$($tp.Name) build completed in $i seconds with status of $($inProgressBuild.Status)."
+                            }
+                            else{
+                                $i++
+                                Write-Host "$($tpc.Name)-$($tp.Name):$($bdef.Name) is currently $($inProgressBuild.Status) ($i seconds)"
+                                Start-Sleep -s 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+   }
+   end{}
+}
+
 function Update-TfsXAMLBuildDefintionCurrentController(){
     [CmdLetBinding(SupportsShouldProcess=$true)]
     param(
@@ -1400,7 +1489,7 @@ Export-ModuleMember -Function "New-Folder", "Get-Hash", "Switch-ChildNodes", "Re
 Export-ModuleMember -Function "Get-Nuget", "Get-TfsAssembliesFromNuget"
 Export-ModuleMember -Function "Get-TfsConfigServer", "Get-TfsTeamProjectCollectionIds"
 Export-ModuleMember -Function "Get-TfsEventSubscriptions"
-Export-ModuleMember -Function "Update-TfsXAMLBuildPlatformConfiguration", "Update-TfsXAMLBuildDefintionCurrentController", "Update-TfsXAMLBuildDefintionDropFolder", "Get-TfsXAMLBuildsCreatingWorkItems"
+Export-ModuleMember -Function "Request-TfsXAMLBuild", "Update-TfsXAMLBuildPlatformConfiguration", "Update-TfsXAMLBuildDefintionCurrentController", "Update-TfsXAMLBuildDefintionDropFolder", "Get-TfsXAMLBuildsCreatingWorkItems"
 Export-ModuleMember -Function "Backup-TfsWorkItems", "Remove-TfsWorkItems", "Remove-TfsWorkItemTemplate", "Import-TfsWorkItemTemplate", "Update-TfsWorkItemTemplate", "Save-TfsCleanedWITD"
 Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis"
 Export-ModuleMember -Function "Update-TfsFieldNames", "Find-TfsFieldDescription"
