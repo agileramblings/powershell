@@ -5,18 +5,25 @@
 
 Clear-Host
 
-function Import-TFS2013 {
-    # server OM bin folder
-    # "C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin"
-    Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Framework.Server.dll'
-    Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.Core.dll'
-    Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.WebAccess.WorkItemTracking.Common.dll'
+function Import-TFS2015 {
+    try{
+        # server OM bin folder
+        # "C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin"
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Framework.Server.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.Core.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.WebAccess.WorkItemTracking.Common.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.VisualStudio.Services.Client.dll'
     
-    #copy client OM from Visual Studio install on developer machine to Server bin folder noted above
-    # "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0"
-    Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.WorkItemTracking.Client.dll'
-    Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Client.dll'
-    Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Common.dll'
+        #copy client OM from Visual Studio install on developer machine to Server bin folder noted above
+        # "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0"
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.WorkItemTracking.Client.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Client.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Common.dll'
+    }
+    catch [Exception]
+    {
+        echo $_.Exception|format-list -force
+    }
 }
 
 function Get-TfsDbConnectionString(){
@@ -133,7 +140,7 @@ function Update-TfsTeamProjectFeatureConfiguration()
             Write-Host "Authenticated"
 
             [string[]] $urls = @('http://ditfssb01:8080/tfs/projectcollection01', 'http://ditfssb01:8080/tfs/projectcollection02')
-            [string] $webConfigLocation = 'C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\web.config'
+            [string] $webConfigLocation = 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\web.config'
     
             # create folder for logging artifacts
             if (!(Test-Path -Path C:\TFS\Results\)){
@@ -167,7 +174,7 @@ function Update-TfsTeamProjectFeatureConfiguration()
 }
 
 Import-Module GenericMethods
-Import-TFS2013
-Set-Tfs2013
+Import-TFS2015
+Set-Tfs2015
 Update-TfsTeamProjectFeatureConfiguration "http://ditfssb01:8080/tfs/projectcollection02"
 Update-TfsTeamProjectFeatureConfiguration "http://ditfssb01:8080/tfs/projectcollection01"

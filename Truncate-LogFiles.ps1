@@ -18,7 +18,7 @@ function Log {
 # Import-Module SQLPS # See notes..
 $Logfile = (Get-Location).path + "\Truncate_" + $env:COMPUTERNAME + (Get-Date -format yyyyMMdd_hhmmsstt) + ".txt"
 # skipping first 4 databases: master, tempdb, model, msdb
-(Invoke-SQLCMD -Query "SELECT * FROM sysdatabases WHERE dbid > 4") | ForEach-Object {
+    (Invoke-SQLCMD -Query "SELECT * FROM sysdatabases WHERE dbid > 4") | % {
     $SQLLogString = "N'" + (Invoke-SQLCMD -Query ("SELECT name FROM sys.master_files WHERE database_id = " + $_.dbid + " AND type = 1;")).name + "'"
     Set-Location -Path ($Logfile.Split(":")[0] + ":")
     log ("Truncating log file $SQLLogString for database " + $_.name + " (database_id = " + $_.dbid + ")") Cyan $Logfile

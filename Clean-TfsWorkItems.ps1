@@ -1,4 +1,4 @@
-﻿$configServer = Get-TfsConfigServer "http://ditfssb01:8080/tfs" "2013.4"
+﻿$configServer = Get-TfsConfigServer "http://ditfssb01:8080/tfs"
 $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
 
 $taskWITTitles = @(

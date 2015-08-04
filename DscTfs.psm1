@@ -1,22 +1,147 @@
-#Get-TfsConfigServer "http://divcd83:8080/tfs" "2013.4" | Get-TfsTeamProjectCollectionAnalysis -Folder "C:\temp\Test_Analysis" -Verbose 4> "C:\Temp\Analysis_log.txt"
+#Get-TfsConfigServer "http://divcd83:8080/tfs" "2015" | Get-TfsTeamProjectCollectionAnalysis -Folder "C:\temp\Test_Analysis" -Verbose 4> "C:\Temp\Analysis_log.txt"
 
 Write-Host "Loading DscTfs Module"
 
-function Import-TFSAssemblies_2010 {
-    Add-Type -AssemblyName "Microsoft.TeamFoundation.Client, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
-    Add-Type -AssemblyName "Microsoft.TeamFoundation.Common, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
-    Add-Type -AssemblyName "Microsoft.TeamFoundation.VersionControl.Client, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
-    Add-Type -AssemblyName "Microsoft.TeamFoundation.WorkItemTracking.Client, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a";
+# Get TFS Object Model
+$vsCommon = "Microsoft.VisualStudio.Services.Common"
+$commonName = "Microsoft.TeamFoundation.Common"
+$clientName = "Microsoft.TeamFoundation.Client"
+$VCClientName = "Microsoft.TeamFoundation.VersionControl.Client"
+$WITClientName = "Microsoft.TeamFoundation.WorkItemTracking.Client"
+$BuildClientName = "Microsoft.TeamFoundation.Build.Client"
+$BuildCommonName = "Microsoft.TeamFoundation.Build.Common"
+$BuildvNextName = "Microsoft.TeamFoundation.Build2.WebApi"
+#$BuildWorkflowName = "Microsoft.TeamFoundation.Build.Workflow"
+
+#symbolic link (folder) for VS binaries
+#available after Visual Studio 2015 install
+$symbolicLocation = 'C:\Program Files (x86)\Microsoft Visual Studio 14.0\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\'
+
+#witadmin location after VS 2015 Install
+$witadmin = "C:\program files (x86)\Microsoft Visual Studio 14.0\common7\ide\witadmin.exe"
+
+#Module folder
+$ModuleRoot = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
+#where to put TFS Client OM files
+$omBinFolder = $("$ModuleRoot\TFSOM\bin\")
+
+function Get-Nuget(){
+<# 
+    .SYNOPSIS
+    This function gets Nuget.exe from the web
+    .DESCRIPTION
+    This function gets nuget.exe from the web and stores it somewhere relative to the module folder location
+#>
+    [CmdLetBinding()]
+    param()
+
+    begin{}
+    process
+    {
+        #where to get Nuget.exe from
+	    $sourceNugetExe = "http://nuget.org/nuget.exe"
+    
+        #where to save Nuget.exe too
+        $targetNugetFolder = New-Folder $("$ModuleRoot\Nuget")
+	    $targetNugetExe = $("$ModuleRoot\Nuget\nuget.exe")
+
+        try
+        {
+            $nugetExe = $targetNugetFolder.GetFiles() | ? {$_.Name -eq "nuget.exe"}
+            if ($nugetExe -eq $null){
+                Invoke-WebRequest $sourceNugetExe -OutFile $targetNugetExe
+            }
+        }
+        catch [Exception]
+        {
+            echo $_.Exception|format-list -force
+        }
+
+    	Set-Alias nuget $targetNugetExe -Scope Global -Verbose
+    }
+    end{}
 }
 
-function Import-TFSAssemblies_2013 {
-    Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.Client.dll";
-    Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.Common.dll";
-    Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.VersionControl.Client.dll";
-    Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.WorkItemTracking.Client.dll";
+function Get-TfsAssembliesFromNuget(){
+<# 
+    .SYNOPSIS
+    This function gets all of the TFS Object Model assemblies from nuget
+    .DESCRIPTION
+    This function gets all of the TFS Object Model assemblies from nuget and then creates a bin folder of all of the net45 assemblies
+    so that they can be referenced easily and loaded as necessary
+#>
+    [CmdletBinding()]
+    param()
+
+    begin{}
+    process{
+        #clear out bin folder
+        $targetOMbinFolder = New-Folder $omBinFolder
+        Remove-Item $targetOMbinFolder -Force -Recurse
+        $targetOMbinFolder = New-Folder $omBinFolder
+        $targetOMFolder = New-Folder $("$ModuleRoot\TFSOM\")
+
+        #get TFS 2015 Object Model assemblies from nuget
+        nuget install "Microsoft.TeamFoundationServer.Client" -OutputDirectory $targetOMFolder -ExcludeVersion -NonInteractive
+        nuget install "Microsoft.TeamFoundationServer.ExtendedClient" -OutputDirectory $targetOMFolder -ExcludeVersion -NonInteractive
+        nuget install "Microsoft.VisualStudio.Services.Client" -OutputDirectory $targetOMFolder -ExcludeVersion -NonInteractive
+        nuget install "Microsoft.VisualStudio.Services.InteractiveClient" -OutputDirectory $targetOMFolder -ExcludeVersion -NonInteractive
+    
+        #move all of the net45 assemblies to a bin folder so we can reference them and they are colocated so that they can find each other
+        #as necessary
+        $allDlls = Get-ChildItem -Path $("$ModuleRoot\TFSOM\") -Recurse -File -Filter "*.dll"
+        
+        # Move all the required .dlls out of the nuget folder structure
+        #exclude portable dlls
+        $requiredDlls = $allDlls | ? {$_.PSPath.Contains("portable") -ne $true } 
+        #exclude resource dlls
+        $requiredDlls = $requiredDlls | ? {$_.PSPath.Contains("resources") -ne $true } 
+        #include net45, native, and Microsoft.ServiceBus.dll
+        $requiredDlls = $requiredDlls | ? { ($_.PSPath.Contains("net45") -eq $true) -or ($_.PSPath.Contains("native") -eq $true) -or ($_.PSPath.Contains("Microsoft.ServiceBus") -eq $true) }
+        #copy them all to a bin folder
+        $requiredDlls | % { Copy-Item -Path $_.Fullname -Destination $targetOMBinFolder}
+    }
+    end{}
+
 }
 
-[string]$targetVersion = "2013.4"
+function Import-TFSAssemblies() {
+<# 
+    .SYNOPSIS
+    This function imports TFS Object Model assemblies into the PowerShell session
+    .DESCRIPTION
+    After the TFS 2015 Object Model has been retrieved from Nuget using Get-TfsAssembliesFromNuget function,
+    this function will import the necessary (given current functions) assmeblines into the PowerShell session
+#>
+    [CmdLetBinding()]
+    param()
+
+    begin{}
+    process
+    {
+        $omBinFolder = $("$ModuleRoot\TFSOM\bin\");
+        $targetOMbinFolder = New-Folder $omBinFolder;
+
+        try { 
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $vsCommon + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $commonName + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $clientName + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $VCClientName + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $WITClientName + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $BuildClientName + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $BuildCommonName + ".dll")
+            Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $BuildvNextName + ".dll")
+        } 
+        catch
+        {
+            $_.Exception.LoaderExceptions | $ { $_.Message }
+        }
+    }
+    end{}
+    #Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $BuildWorkflowName + ".dll")
+}
+
+[string]$targetVersion = "2015"
 [bool]$importCompleted = $false
 
 function New-Folder() {
@@ -44,6 +169,33 @@ function New-Folder() {
         }
     }           
 } #end Function New-Directory
+
+# better Remove-Item functions -- $RC
+function Get-Tree() { 
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory=$true)] [string]$Path,
+		[parameter()] [string] $Include = '*'
+    )
+	process
+	{
+	    @(Get-Item $Path -Include $Include) + 
+        (Get-ChildItem $Path -Recurse -Include $Include) | 
+        sort pspath -Descending -unique
+	}
+} 
+
+function Remove-Tree() {
+	[CmdLetBinding()]
+    param(
+        [parameter(Mandatory=$true)] [string]$Path,
+		[parameter()] [string] $Include = '*'
+    ) 
+    process
+	{
+		Get-Tree $Path $Include | Remove-Item -force -recurse
+	}
+}
 
 function Get-Hash() {
 <# 
@@ -171,20 +323,12 @@ function Get-TfsConfigServer() {
     [CmdletBinding()]
     param( 
         [parameter(Mandatory = $true)]
-        [string]$url,
-        [parameter(Mandatory = $true)]
-        [string]$tfsVersion)
+        [string]$url
+        )
 
     begin {
-        Write-Verbose "Loading TFS OM Assemblies for $tfsVersion"
-        $targetVersion = $tfsVersion
-        if ($tfsVersion.Contains("2010")){
-            Import-TFSAssemblies_2010
-        } elseif ($tfsVersion.Contains("2013")) {
-            Import-TFSAssemblies_2013
-        } else{
-            Import-TFSAssemblies_2013
-        }
+        Write-Verbose "Loading TFS OM Assemblies for $targetVersion"
+        Import-TFSAssemblies
         $importCompleted = $true
     }
 
@@ -238,6 +382,154 @@ function Get-TfsTeamProjectCollectionIds() {
     end{}
 } #end Function Get-TfsTeamProjectCollectionIds
 
+#adapted from http://blogs.msdn.com/b/alming/archive/2013/05/06/finding-subscriptions-in-tfs-2012-using-powershell.aspx
+function Get-TFSEventSubscriptions
+{
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer
+    )
+ 
+   begin{}
+   process{
+    $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+    foreach($tpcId in $tpcIds)
+    {
+        #Get TPC instance
+        $tpc = $configServer.GetTeamProjectCollection($tpcId)
+        #TFS Services to be used
+        $eventService = $tpc.GetService("Microsoft.TeamFoundation.Framework.Client.IEventService")
+        $identityService = $tpc.GetService("Microsoft.TeamFoundation.Framework.Client.IIdentityManagementService")
+ 
+        foreach ($sub in $eventService.GetAllEventSubscriptions())
+        {
+            #First resolve the subscriber ID
+            $tfsId = $identityService.ReadIdentity([Microsoft.TeamFoundation.Framework.Common.IdentitySearchFactor]::Identifier, 
+                                                   $sub.Subscriber,
+                                                   [Microsoft.TeamFoundation.Framework.Common.MembershipQuery]::None,
+                                                   [Microsoft.TeamFoundation.Framework.Common.ReadIdentityOptions]::None )
+            if ($tfsId.UniqueName)
+            {
+                $subscriberId = $tfsId.UniqueName
+            }
+            else
+            {
+                $subscriberId = $tfsId.DisplayName
+            }
+ 
+            #then create custom PSObject
+            $subPSObj = New-Object PSObject -Property @{
+                            AppTier        = $tpc.Uri
+                            ID             = $sub.ID
+                            Device         = $sub.Device
+                            Condition      = $sub.ConditionString
+                            EventType      = $sub.EventType
+                            Address        = $sub.DeliveryPreference.Address
+                            Schedule       = $sub.DeliveryPreference.Schedule
+                            DeliveryType   = $sub.DeliveryPreference.Type
+                            SubscriberName = $subscriberId
+                            Tag            = $sub.Tag
+                            }
+ 
+            #Send object to the pipeline. You could store it on an Arraylist, but that just
+            #consumes more memory
+            $subPSObj
+ 
+            ##This is another variation where we just add a property to the existing Subscription object
+            ##this might be desirable since it will keep the other members
+            #Add-Member -InputObject $sub -NotePropertyName SubscriberName -NotePropertyValue $subscriberId
+        }
+    }
+   }
+   end{}
+}
+
+function Update-TfsXAMLBuildPlatformConfiguration(){
+    [CmdLetBinding(SupportsShouldProcess=$true)]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [string]$newPlatform,
+        [parameter(Mandatory = $false)]
+        [string]$tpcName,
+        [parameter(Mandatory = $false)]
+        [string]$tpName,
+        [parameter(Mandatory = $false)]
+        [string]$buildName
+    )
+   begin{}
+   process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
+
+            $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
+ 
+            #Get WorkItemStore
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
+            #Get a list of TeamProjects
+            $tps = $wiService.Projects
+
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                if( ![string]::IsNullorWhiteSpace($tpName) -and ($tpName -ne $tp.Name) ) { continue;}
+
+                $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
+                $defaultTemplateDefns = $buildDefinitionList | ? { $_.Process.ServerPath.Contains("DefaultTemplate") }
+                
+                [array]$bdefs = ,
+                [array]$actions = @(, @())
+                foreach ($bdef in $buildDefinitionList)
+                {
+                   [xml]$x = [xml]$bdef.ProcessParameters
+                   
+                   # guards against build defs with no configurations
+                   if($x.SelectSingleNode("//PlatformConfigurationList") -eq $null) {continue;}
+                   if($x.Dictionary.BuildSettings.'BuildSettings.PlatformConfigurations'.PlatformConfigurationList.Capacity -eq 0) { continue; }
+                   
+                   $x.Dictionary.BuildSettings.'BuildSettings.PlatformConfigurations'.PlatformConfigurationList.PlatformConfiguration | % {
+                        $messages = @()
+                        $messages += "The configuration "
+                        $messages += "$($_.Configuration)" 
+                        $messages += " in build definition " 
+                        $messages += "$($bdef.Name) "
+                        $messages += " in "
+                        $messages += "$($bdef.TeamProject)"
+                        $messages += " would have been converted from $($_.Platform) to $newPlatform."
+                        $actions += ,$messages
+
+                        $_.Platform = $newPlatform
+                   }
+                   $bdef.ProcessParameters = $x.OuterXml
+                   $bdefs += $bdef
+                }
+                if (!$WhatIfPreference) {
+                    $bs.SaveBuildDefinitions($bdefs)
+                } else {
+                    if ($actions.Length -le 0) {
+                        Write-Host "No changes were potentially made to any build definitions in $($tp.Name) - $($tpc.Name)"
+                    }else { 
+                        $actions | % { Write-Host $_[0] -NoNewline
+                                       Write-Host $_[1] -ForegroundColor Yellow -NoNewline
+                                       Write-Host $_[2] -NoNewline
+                                       Write-Host $_[3] -ForegroundColor Magenta -NoNewline
+                                       Write-Host $_[4] -NoNewline
+                                       Write-Host $_[5] -ForegroundColor Green -NoNewline
+                                       Write-Host $_[6] } 
+                    }
+                }
+            }
+        }
+   }
+   end{}
+}
+
 function Backup-TfsWorkItems() {
 <# 
 .SYNOPSIS
@@ -286,7 +578,7 @@ function Backup-TfsWorkItems() {
 
             if (!$tpc.Name.ToLower().Contains(([string]$($tpcName)).ToLower())) { continue }
                 
-            #Get WorkItemStore
+            #Get WorkItemStore`
             $wiService = New-Object "Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore" -ArgumentList $tpc
             $wiQuery = New-Object -TypeName "Microsoft.TeamFoundation.WorkItemTracking.Client.Query" -ArgumentList $wiService, $wiql
             $results = $wiQuery.RunQuery()
@@ -400,7 +692,7 @@ function Remove-TfsWorkItems() {
                 $idList = $matches | % {$_.Id}
                 if ($idList.Count -gt 0){
                     $ids = [string]::Join(",", $idList)
-                    witadmin destroywi /collection:$($tpc.Uri.AbsoluteUri) /id:$ids /noprompt | Out-Null
+                    & $witadmin destroywi /collection:$($tpc.Uri.AbsoluteUri) /id:$ids /noprompt | Out-Null
                     $totalWIDestroyed += $idList.Count
                 }
                 Write-Verbose "$($tp.Name) - $witType WI Destroyed: $($idList.Count)"
@@ -444,7 +736,7 @@ function Remove-TfsWorkItemTemplate() {
         #ensure we can call witadmin and that the witType exists
         try{
             $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
-            $witList = witadmin listwitd /collection:$tpcUrl  /p:$tpName | Sort-Object;
+            $witList = & $witadmin listwitd /collection:$tpcUrl  /p:$tpName | Sort-Object;
             if (!($witList -contains $witType)){
                 Write-Error "$($tpcName)/$($tpName) does not contain a work item type called $witType" -ErrorAction Stop
             }
@@ -488,7 +780,7 @@ function Remove-TfsWorkItemTemplate() {
                 $results = $wiQuery.RunQuery()
                     
                 if ($results.Count -eq 0){
-                    witadmin destroywitd /collection:$($tpc.Uri.AbsoluteUri)  /p:$($tp.Name) /n:"$witType" /noprompt | Out-Null
+                    & $witadmin destroywitd /collection:$($tpc.Uri.AbsoluteUri)  /p:$($tp.Name) /n:"$witType" /noprompt | Out-Null
                     Write-Verbose "$($tp.Name) - $witType WIT Destroyed"
                     break
                 } else {
@@ -542,11 +834,12 @@ function Import-TfsWorkItemTemplate() {
             
             $fileName = $($file.FullName);
             $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
-            witadmin importwitd /collection:$tpcUrl /p:"$tpName" /f:"$fileName"
+            & $witadmin importwitd /collection:$tpcUrl /p:"$tpName" /f:"$fileName"
         }
     }
     end{}
 }
+
 function Find-TfsFieldDescription{
 
     [CmdLetBinding()]
@@ -562,7 +855,7 @@ function Find-TfsFieldDescription{
     begin {}
     process {
         $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
-        $arrayEntries = witadmin listfields /collection:$tpcUrl
+        $arrayEntries = & $witadmin listfields /collection:$tpcUrl
         $fieldRefList = $arrayEntries | ? {$_.Contains($refnameContains) -and $_.Contains("Field:")}
         $allFields = @();
         foreach($field in $fieldRefList){
@@ -605,7 +898,7 @@ function Update-TfsFieldNames {
         $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
         foreach($field in $fieldsToRename)
         { 
-            witadmin changefield /collection:$tpcUrl /n:"$($field.Refname)" /name:"$($field.Name)" /noprompt 
+            & $witadmin changefield /collection:$tpcUrl /n:"$($field.Refname)" /name:"$($field.Name)" /noprompt 
         }
     }
     end {}
@@ -730,7 +1023,7 @@ function Get-TfsTeamProjectCollectionAnalysis() {
                 Write-Verbose "Most recent work item changed date is $mostRecentChangedWorkItem"
 
                 Write-Verbose "Get a list of WIT in this TP"
-                $witList = witadmin listwitd /collection:$($tpc.Uri.AbsoluteUri) /p:$($tp.Name) | Sort-Object;
+                $witList = & $witadmin listwitd /collection:$($tpc.Uri.AbsoluteUri) /p:$($tp.Name) | Sort-Object;
                 $stringifiedWITList = [string]::Join("", $witList) -replace " ", ""
                 $fieldsFingerprint = Get-Hash $stringifiedWITList
                 $witList | % { if ($witFieldDictionary.ContainsKey($_) -eq $false) { $witFieldDictionary.Add($_, $totalFieldsFound); $totalFieldsFound += 3; } } | Out-Null
@@ -761,7 +1054,7 @@ function Get-TfsTeamProjectCollectionAnalysis() {
                     $csvLine[$witStartCol+1] = $wiQuery.RunQuery().Count
                 
                     Write-Verbose "Getting WITD xml"
-                    [xml]$wit_definition_xml = witadmin exportwitd /collection:$($tpc.Uri.AbsoluteUri) /p:$($tp.Name) /n:$wit;
+                    [xml]$wit_definition_xml = & $witadmin exportwitd /collection:$($tpc.Uri.AbsoluteUri) /p:$($tp.Name) /n:$wit;
 
                     Write-Verbose "Cleaning up WITD xml"
                     Write-Verbose "Removing some nodes that cause fingerprinting problems but not a meaningful difference"
@@ -855,13 +1148,260 @@ function Save-TfsCleanedWITD(){
         [void]$witd.Save($fileLocation)
     }
 }
+function Get-TfsXAMLBuildsCreatingWorkItems(){
+    [CmdLetBinding(SupportsShouldProcess=$true)]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $false)]
+        [string]$tpcName,
+        [parameter(Mandatory = $false)]
+        [string]$tpName,
+        [parameter(Mandatory = $false)]
+        [string]$buildName
+    )
+   begin{}
+   process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
 
-Set-Alias gh Get-Hashtfpt
+        [array]$bdefs = ,
+        [array]$actions = @(, @())
+
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
+
+            $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
+ 
+            #Get WorkItemStore
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
+            #Get a list of TeamProjects
+            $tps = $wiService.Projects
+
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                if( ![string]::IsNullorWhiteSpace($tpName) -and ($tpName -ne $tp.Name) ) { continue;}
+
+                $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
+                               
+                foreach ($bdef in $buildDefinitionList)
+                {
+                   if( ![string]::IsNullorWhiteSpace($buildName) -and ($buildName -ne $bdef.Name) ) { continue;}
+
+                    $buildPT = $bdef.Process
+                    [xml]$buildPTXml = $buildPT.Parameters
+                    if ($buildPTXml.Activity.'Process.CreateWorkItem' -ne $null){
+                        $bdefs += $bdef
+                    }
+                }
+            }
+        }
+        Write-Output $bdefs
+   }
+   end{}
+}
+
+function Update-TfsXAMLBuildDefintionDropFolder(){
+    [CmdLetBinding(SupportsShouldProcess=$true)]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [string]$newFolder,
+        [parameter(Mandatory = $false)]
+        [string]$tpcName,
+        [parameter(Mandatory = $false)]
+        [string]$tpName,
+        [parameter(Mandatory = $false)]
+        [string]$buildName,
+        [parameter(Mandatory = $false)]
+        [boolean]$useFullName
+    )
+   begin{
+        if (!(Test-Path -Path $folderPath)){
+            Write-Error "The folder path requested does not exist"
+        } else {
+            $path = Get-Item -Path $folderPath 
+            $newFolder = $path.PSPath
+        }
+   }
+   process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
+
+            $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
+ 
+            #Get WorkItemStore
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
+            #Get a list of TeamProjects
+            $tps = $wiService.Projects
+
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                if( ![string]::IsNullorWhiteSpace($tpName) -and ($tpName -ne $tp.Name) ) { continue;}
+
+                $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
+                               
+                [array]$bdefs = ,
+                [array]$actions = @(, @())
+                foreach ($bdef in $buildDefinitionList)
+                {
+                   if( ![string]::IsNullorWhiteSpace($buildName) -and ($buildName -ne $bdef.Name) ) { continue;}
+
+                    $messages = @()
+                    $messages += "The default drop location for build definition "
+                    $messages += "$($bdef.Name) "
+                    $messages += " in "
+                    $messages += "$($bdef.TeamProject)"
+                    $messages += " would have been changed from "
+                    $messages += "$($bdef.DefaultDropLocation)"
+                    $messages += " to " 
+                        
+                    # update drop location
+                    if ($useFullName){
+                        $bdef.DefaultDropLocation = $newFolder + $tp.Name 
+                    }else {
+                        $bdef.DefaultDropLocation = $newFolder + $tp.Id
+                    }
+
+                    $messages += "$($bdef.DefaultDropLocation)."
+                    $actions += ,$messages
+                    
+                    $bdefs += $bdef
+                }
+                if (!$WhatIfPreference) {
+                    $bs.SaveBuildDefinitions($bdefs)
+                } else {
+                    if ($actions.Length -le 0) {
+                        Write-Host "No changes were potentially made to any build definitions in $($tp.Name) - $($tpc.Name)"
+                    }else { 
+                        $actions | % { Write-Host $_[0] -NoNewline
+                                       Write-Host $_[1] -ForegroundColor Yellow -NoNewline
+                                       Write-Host $_[2] -NoNewline
+                                       Write-Host $_[3] -ForegroundColor Magenta -NoNewline
+                                       Write-Host $_[4] -NoNewline
+                                       Write-Host $_[5] -ForegroundColor Red -NoNewline
+                                       Write-Host $_[6] -NoNewline
+                                       Write-Host $_[7] -ForegroundColor Green
+                                     } 
+                    }
+                }
+            }
+        }
+   }
+   end{}
+}
+
+function Update-TfsXAMLBuildDefintionCurrentController(){
+    [CmdLetBinding(SupportsShouldProcess=$true)]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [string]$newController,
+        [parameter(Mandatory = $false)]
+        [string]$tpcName,
+        [parameter(Mandatory = $false)]
+        [string]$tpName,
+        [parameter(Mandatory = $false)]
+        [string]$buildName
+    )
+   begin{}
+   process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
+
+            $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
+ 
+            #Get WorkItemStore
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
+            #Get a list of TeamProjects
+            $tps = $wiService.Projects
+
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                if( ![string]::IsNullorWhiteSpace($tpName) -and ($tpName -ne $tp.Name) ) { continue;}
+
+                $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
+                               
+                [array]$bdefs = ,
+                [array]$actions = @(, @())
+                $controllerName = $bs.QueryBuildControllers() | ? {$_.Name.ToLower().Contains($newController.ToLower())} | % {$_.Name}
+                try{
+                    $controller = $bs.GetBuildController($controllerName) 
+                }
+                catch [Exception]{
+                    Write-Host "There is no build controller named " -ForegroundColor Red -NoNewline
+                    Write-Host $newController -ForegroundColor Yellow -NoNewline
+                    Write-Host " associated with " -NoNewLine
+                    Write-Host $($tpc.Name) -ForegroundColor Magenta
+                    continue
+                }
+
+                $buildDefinitionList | % {
+                    Write-Verbose "Checking $($_.Name)"
+                    Write-Verbose "$($_.Name) is using $($_.BuildController.Name)"
+                    if ($_.BuildController.Uri -ne $controller.Uri) {
+                            $messages = @()
+                            $messages += "Would have set "
+                            $messages += "$($_.Name)" 
+                            $messages += " to use " 
+                            $messages += "$($controllerName)."
+                            $actions += ,$messages
+                            $_.BuildController = $controller
+                    }
+                    else {
+                        Write-Verbose "Build controller is already set. Taking no action."
+                    }
+                
+                    if (!$WhatIfPreference) {
+                        # update controller
+                        Write-Host "Stop here"
+                        #$_.Save()
+                    } else {
+                        if ($actions.Length -le 0) { 
+                            Write-Host "No changes were potentially made to any build definitions in " -NoNewline
+                            Write-Host  $($tp.Name) -ForegroundColor Yellow -NoNewline
+                            Write-host " - $($tpc.Name)" -ForegroundColor Magenta
+                        }else { 
+                            $actions | % { Write-Host $_[0] -NoNewline
+                                           Write-Host $_[1] -ForegroundColor Yellow -NoNewline
+                                           Write-Host $_[2] -NoNewline
+                                           Write-Host $_[3] -ForegroundColor Magenta -NoNewline 
+                                         } 
+
+                        }
+                    }
+                }
+            }
+        }
+   }
+   end{}
+}
+
+Set-Alias gh Get-Hash
 Set-Alias gtfs Get-TfsConfigServer
 
 Export-ModuleMember -Alias *
 Export-ModuleMember -Function "New-Folder", "Get-Hash", "Switch-ChildNodes", "Remove-Nodes"
+Export-ModuleMember -Function "Get-Nuget", "Get-TfsAssembliesFromNuget"
 Export-ModuleMember -Function "Get-TfsConfigServer", "Get-TfsTeamProjectCollectionIds"
-Export-ModuleMember -Function "Backup-TfsWorkItems", "Remove-TfsWorkItems", "Remove-TfsWorkItemTemplate", "Import-TfsWorkItemTemplate", "Update-TfsWorkItemTemplate"
-Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis", "Update-TfsFieldNames", "Find-TfsFieldDescription", "Save-TfsCleanedWITD"
+Export-ModuleMember -Function "Get-TfsEventSubscriptions"
+Export-ModuleMember -Function "Update-TfsXAMLBuildPlatformConfiguration", "Update-TfsXAMLBuildDefintionCurrentController", "Update-TfsXAMLBuildDefintionDropFolder", "Get-TfsXAMLBuildsCreatingWorkItems"
+Export-ModuleMember -Function "Backup-TfsWorkItems", "Remove-TfsWorkItems", "Remove-TfsWorkItemTemplate", "Import-TfsWorkItemTemplate", "Update-TfsWorkItemTemplate", "Save-TfsCleanedWITD"
+Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis"
+Export-ModuleMember -Function "Update-TfsFieldNames", "Find-TfsFieldDescription"
 

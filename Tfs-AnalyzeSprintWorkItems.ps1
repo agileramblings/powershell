@@ -3,7 +3,7 @@
 function Import-TFSAssemblies_2013 {
     Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.Client.dll";
     Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.Common.dll";
-    #Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.dll";
+    Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.dll";
     Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.VersionControl.Client.dll";
     Add-Type -LiteralPath "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0\Microsoft.TeamFoundation.WorkItemTracking.Client.dll";
 }
@@ -46,41 +46,27 @@ else
         #iterate through the TeamProjects
         foreach ($tp in $tps)
         { 
-            #Find Sprint Work Items
+            #most recent work item change
             $wiql = "SELECT [System.Id], [Changed Date] FROM WorkItems WHERE [System.WorkItemType] = 'Sprint' AND [System.TeamProject] = '$($tp.name)' ORDER BY [Changed Date] DESC"
             $wiQuery = New-Object -TypeName "Microsoft.TeamFoundation.WorkItemTracking.Client.Query" -ArgumentList $wiService, $wiql
             $results = $wiQuery.RunQuery()
-
-            #display all retrospective notes
-            #$results | % { Write-Host "Retro Notes $($_.Fields["Retrospective"].Value )" -ForegroundColor Cyan }
-                        
-            #display all description notes
-            #$results | % { Write-Host "Retro Notes $($_.Fields["Description"].Value )" -ForegroundColor Cyan}
-            
             $matches = $results | ? {
                 if ($_.Fields.Name.Contains("Retrospective")){
                     $_.Fields["Retrospective"].Value -ne "<h5>What worked?</h5><h5>What didn't work?</h5><h5>What will we do differently?</h5>"
                 } elseif ($_.Fields.Name.Contains("Description")){
-                    $_.Fields["Description"].Value -ne ""
+                    $_.Fields["Description"].Value -ne "<h5>What worked?</h5><h5>What didn't work?</h5><h5>What will we do differently?</h5>"
                 }
             }
-            if ($results.Count -ne 0){
-                Write-Host "Found Sprint Work Items $($results.Count) - Found non-standard notes $($matches.Count)" -NoNewLine
-                if ($matches.Count -gt 0) {
-                    Write-Host " Found retrospective notes - $($tp.Name)" -foregroundcolor Green
-                    foreach ($match in $matches){
-                        if ($match.Fields.Name.Contains("Retrospective")){
-                            Write-Host $match.Fields["Retrospective"].Value -foregroundcolor Yellow
-                        } elseif ($match.Fields.Name.Contains("Description")){
-                            Write-Host $match.Fields["Description"].Value -foregroundcolor Yellow
-                        }
-                        Write-Host "------------^^ $($match.Fields["Iteration Path"].Value) ^^-------------" -ForegroundColor White
-                    }
-                
-                }else {
-                    Write-Host " $($tp.Name)" -foregroundcolor Magenta
+            Write-Host "Found Sprint Work Items $($results.Count) - Found non-standard notes $($matches.Count)" -NoNewLine
 
-                }
+            if (($tp.Name -eq "CAAF") -or ($tp.Name.Contains("PTWeb"))){
+                Write-Host "CAAF - STOP HERE"
+            }
+            if ($matches.Count -gt 0) {
+                Write-Host " Found retrospective notes - $($tp.Name)" -foregroundcolor Green
+                $matches | % {Write-Host $_.Fields["Retrospective"].Value}
+            }else {
+                Write-Host ""
             }
         }
     }
