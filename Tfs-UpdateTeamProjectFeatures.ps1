@@ -9,16 +9,25 @@ function Import-TFS2015 {
     try{
         # server OM bin folder
         # "C:\Program Files\Microsoft Team Foundation Server 12.0\Application Tier\Web Services\bin"
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Common.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Client.dll'
         Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Framework.Server.dll'
-        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.Core.dll'
+        [reflection.assembly]::LoadFrom('C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.Core.dll')
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.WebAccess.dll'
         Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Server.WebAccess.WorkItemTracking.Common.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.WorkItemTracking.Client.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.WorkItemTracking.Server.DataAccessLayer.dll'
+
         Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.VisualStudio.Services.Client.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.VisualStudio.Services.Common.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.VisualStudio.Services.Configuration.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.VisualStudio.Services.Identity.dll'
+        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.VisualStudio.Services.WebApi.dll'
+#        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.WITDataStore32.dll'
+
     
         #copy client OM from Visual Studio install on developer machine to Server bin folder noted above
         # "C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE\ReferenceAssemblies\v2.0"
-        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.WorkItemTracking.Client.dll'
-        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Client.dll'
-        Add-Type -LiteralPath 'C:\Program Files\Microsoft Team Foundation Server 14.0\Application Tier\Web Services\bin\Microsoft.TeamFoundation.Common.dll'
     }
     catch [Exception]
     {
@@ -54,9 +63,10 @@ function Get-TfsDeploymentServiceHost ($urlToCollection, $webConfigLocation) {
     $instanceId = $tpc.InstanceId
 
     $deploymentHostProperties = New-Object 'Microsoft.TeamFoundation.Framework.Server.TeamFoundationServiceHostProperties'
-    $deploymentHostProperties.ConnectionInfo = [Microsoft.TeamFoundation.Framework.Server.SqlConnectionInfoFactory]::Create($connStr, $null, $null);
+    #$deploymentHostProperties.ConnectionInfo = [Microsoft.TeamFoundation.Framework.Server.SqlConnectionInfoFactory]::Create($connStr, $null, $null);
     $deploymentHostProperties.HostType = [Microsoft.TeamFoundation.Framework.Server.TeamFoundationHostType]::Application -bor [Microsoft.TeamFoundation.Framework.Server.TeamFoundationHostType]::Deployment
-    $dsh = New-Object 'Microsoft.TeamFoundation.Framework.Server.DeploymentServiceHost' -ArgumentList $deploymentHostProperties, $false
+    $connection = [Microsoft.TeamFoundation.Framework.Server.SqlConnectionInfoFactory]::Create($connStr, $null, $null)
+    $dsh = New-Object 'Microsoft.TeamFoundation.Framework.Server.DeploymentServiceHost' -ArgumentList $deploymentHostProperties, $connection, $false
     $dsh; $instanceId;
 }
 
@@ -155,7 +165,13 @@ function Update-TfsTeamProjectFeatureConfiguration()
                 $myDsh = Get-TfsDeploymentServiceHost $tpcUrl $webConfigLocation
                 $ctx = Get-TfsGetContext $myDsh[0] $myDsh[1]
                 # get "Microsoft.TeamFoundation.Server.CommonStructureService" service
-                $css = Invoke-GenericMethod -InputObject $ctx -MethodName GetService -GenericType 'Microsoft.TeamFoundation.Integration.Server.CommonStructureService'
+                #$css = Invoke-GenericMethod -InputObject $ctx -MethodName GetService -GenericType 'Microsoft.TeamFoundation.Integration.Server.CommonStructureService'
+                try {
+                    $css = Invoke-GenericMethod -InputObject $ctx -MethodName GetService -GenericType 'Microsoft.TeamFoundation.Integration.Server.CommonStructureService'
+                }
+                catch [Exception]{
+                    echo $_.Exception | Format-list -Force
+                }
                 foreach($proj in $css.GetWellFormedProjects($ctx)){
                     $retVal = Invoke-TfsProvisionProjectFeatures $ctx $proj
 

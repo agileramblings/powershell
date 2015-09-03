@@ -1,12 +1,12 @@
 ﻿# http://www.incyclesoftware.com/2014/10/change-build-controller-multiple-build-definitions/
 
-$cs = Get-TfsConfigServer http://ditfssb02:8080/tfs
+$cs = Get-TfsConfigServer http://ditfssb01:8080/tfs
 $tpcIds = Get-TfsTeamProjectCollectionIds $cs
 
 Write-Verbose "Iterating through each TPC"
 foreach($tpcId in $tpcIds){
     Write-Verbose "Get TPC instance for $tpcId"
-    $tpc = $cs.GetTeamProjectCollection($tpcIds[0])
+    $tpc = $cs.GetTeamProjectCollection($tpcId)
 
     $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
     $css = $tpc.GetService([Microsoft.TeamFoundation.Server.ICommonStructureService])
@@ -14,7 +14,7 @@ foreach($tpcId in $tpcIds){
     $projects = $css.ListAllProjects();
     $controllers = $bs.QueryBuildControllers($true)
     $dscName = "(DSC) DevSupport Centre"
-    $newControllerName = "Ditfssb03 - Controller"
+    $newControllername =  if ($tpc.Name.Contains("ProjectCollection01")) { "Ditfssb03 - Controller" } else { "Ditfssb04 - Controller" }
     foreach($proj in $projects){
         $name = $proj.Name
         #$name = $dscName
@@ -36,7 +36,7 @@ foreach($tpcId in $tpcIds){
 #                $buildPT.Parameters = $buildPTXml
 
                 # update drop location
-                $_.DefaultDropLocation = "\\coc\it\gis-tfs\TestBuilds\" + $name 
+                $_.DefaultDropLocation = "\\coc\it\gis-tfs\qa\" + $name 
 
                 if ($_.BuildController.Uri -ne $controller.Uri) {
                     Write-Host "Setting" $_.Name "to use $newControllerName"
@@ -48,8 +48,8 @@ foreach($tpcId in $tpcIds){
                 
                 if (!$WhatIf) {
                     # update controller
-                    Write-Host "Stop here"
-                    #$_.Save()
+                    #Write-Host "Stop here"
+                    $_.Save()
                 }
             }
         }

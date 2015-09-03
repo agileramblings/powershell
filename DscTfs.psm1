@@ -1,4 +1,4 @@
-#Get-TfsConfigServer "http://divcd83:8080/tfs" "2015" | Get-TfsTeamProjectCollectionAnalysis -Folder "C:\temp\Test_Analysis" -Verbose 4> "C:\Temp\Analysis_log.txt"
+#Get-TfsConfigServer "http://divcd83:8080/tfs" | Get-TfsTeamProjectCollectionAnalysis -Folder "C:\temp\Test_Analysis" -Verbose 4> "C:\Temp\Analysis_log.txt"
 
 Write-Host "Loading DscTfs Module"
 
@@ -25,12 +25,93 @@ $ModuleRoot = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
 #where to put TFS Client OM files
 $omBinFolder = $("$ModuleRoot\TFSOM\bin\")
 
+
+function Select-WriteHost
+{
+   [CmdletBinding(DefaultParameterSetName = 'FromPipeline')]
+   param(
+     [Parameter(ValueFromPipeline = $true, ParameterSetName = 'FromPipeline')]
+     [object] $InputObject,
+
+     [Parameter(Mandatory = $true, ParameterSetName = 'FromScriptblock', Position = 0)]
+     [ScriptBlock] $ScriptBlock,
+
+     [switch] $Quiet
+   )
+
+   begin
+   {
+     function Cleanup
+     {
+       # clear out our proxy version of write-host
+       remove-item function:\write-host -ea 0
+     }
+
+     function ReplaceWriteHost([switch] $Quiet, [string] $Scope)
+     {
+         # create a proxy for write-host
+         $metaData = New-Object System.Management.Automation.CommandMetaData (Get-Command 'Microsoft.PowerShell.Utility\Write-Host')
+         $proxy = [System.Management.Automation.ProxyCommand]::create($metaData)
+
+         # change its behavior
+         $content = if($quiet)
+                    {
+                       # in quiet mode, whack the entire function body, simply pass input directly to the pipeline
+                       $proxy -replace '(?s)\bbegin\b.+', '$Object' 
+                    }
+                    else
+                    {
+                       # in noisy mode, pass input to the pipeline, but allow real write-host to process as well
+                       $proxy -replace '(\$steppablePipeline\.Process)', '$Object; $1'
+                    }  
+
+         # load our version into the specified scope
+         Invoke-Expression "function ${scope}:Write-Host { $content }"
+     }
+
+     Cleanup
+
+     # if we are running at the end of a pipeline, need to immediately inject our version
+     #    into global scope, so that everybody else in the pipeline uses it.
+     #    This works great, but dangerous if we don't clean up properly.
+     if($pscmdlet.ParameterSetName -eq 'FromPipeline')
+     {
+        ReplaceWriteHost -Quiet:$quiet -Scope 'global'
+     }
+   }
+
+   process
+   {
+      # if a scriptblock was passed to us, then we can declare
+      #   our version as local scope and let the runtime take it out
+      #   of scope for us.  Much safer, but it won't work in the pipeline scenario.
+      #   The scriptblock will inherit our version automatically as it's in a child scope.
+      if($pscmdlet.ParameterSetName -eq 'FromScriptBlock')
+      {
+        . ReplaceWriteHost -Quiet:$quiet -Scope 'local'
+        & $scriptblock
+      }
+      else
+      {
+         # in pipeline scenario, just pass input along
+         $InputObject
+      }
+   }
+
+   end
+   {
+      Cleanup
+   }  
+}
+
 function Get-Nuget(){
 <# 
     .SYNOPSIS
     This function gets Nuget.exe from the web
     .DESCRIPTION
     This function gets nuget.exe from the web and stores it somewhere relative to the module folder location
+    .EXAMPLE
+    Get-Nuget
 #>
     [CmdLetBinding()]
     param()
@@ -67,8 +148,10 @@ function Get-TfsAssembliesFromNuget(){
     .SYNOPSIS
     This function gets all of the TFS Object Model assemblies from nuget
     .DESCRIPTION
-    This function gets all of the TFS Object Model assemblies from nuget and then creates a bin folder of all of the net45 assemblies
+    This function gets all of the TFS Object Model assemblies from nuget and then creates a bin folder of all of the net45 assemblies (and other required assemblies)
     so that they can be referenced easily and loaded as necessary
+    .EXAMPLE
+    Get-TfsAssembliesFromNuget
 #>
     [CmdletBinding()]
     param()
@@ -138,11 +221,83 @@ function Import-TFSAssemblies() {
         }
     }
     end{}
-    #Add-Type -LiteralPath $($targetOMbinFolder.PSPath + $BuildWorkflowName + ".dll")
 }
 
 [string]$targetVersion = "2015"
-[bool]$importCompleted = $false
+
+function Get-Definition() {
+<# 
+    .SYNOPSIS
+    This function creates new folders
+    .DESCRIPTION
+    This function will create a new folder if required or return a reference to the folder that was requested to be created if it already exists.
+    .EXAMPLE
+    New-Folder "C:\Temp\MyNewFolder\"
+    .PARAMETER folderPath
+    String representation of the folder path requested
+#>
+
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        $objToInspect,
+        [parameter(Mandatory=$false)]
+        [string] $memberName,
+        [switch]
+        $ShowDefinition
+    )
+    begin{
+        $memberName = $memberName.ToLower()
+        function Show-Def($tempMember){
+            [string]$defn = $tempMember.Definition
+            while([string]::IsNullOrEmpty($defn) -ne $true){
+                $nextCurly = $defn.IndexOf("}")
+                $nextBrace = $defn.IndexOf(")")
+                if ((($nextCurly -gt $nextBrace) -and ($nextBrace -ne -1)) -or ($nextCurly -eq -1)) {
+                    $indexOfClosingBracket = $nextBrace
+                    $opening = "("
+                    $closing = ")"
+                    $replace = ", "
+                } else {
+                    $indexOfClosingBracket = $nextCurly
+                    $opening = "{"
+                    $closing = "}"
+                    $replace = ";"
+                }
+                if ($indexOfClosingBracket -ne $defn.Length -1){
+                    $indexOfClosingBracket += 2
+                } else {
+                    $indexOfClosingBracket += 1
+                }
+                
+                Write-Host "`nReturn Type: " -NoNewline
+                Write-Host $defn.SubString(0, $tempMember.Definition.IndexOf($tempMember.Name)) -ForegroundColor Green
+                Write-Host "Member Name: " -NoNewLine
+                Write-Host $tempMember.Name -ForegroundColor Green
+
+                Write-Host "Input Parameters:"
+                $fragment = $defn.Remove(0, $defn.IndexOf($opening))
+                $fragment = $fragment.SubString(0, $fragment.IndexOf($closing) + 1).Trim()
+                $fragment.Remove($fragment.Length-1).Remove(0,1).Replace($replace, "$").Split("$") | %  { Write-Host "`t$($_.Trim())" -ForegroundColor Yellow }
+                $defn = $defn.Remove(0, $indexOfClosingBracket).Trim()
+            }
+        }
+    }
+    process {
+        $members = $objToInspect | gm 
+        if ([string]::IsNullOrEmpty($memberName)){ 
+           if ($ShowDefinition) {  $members | % {Show-Def($_)} } else {  $members }
+        } else { 
+            $member = $members | ? {$_.Name.ToLower() -eq $memberName}
+            if ($ShowDefinition){
+               Show-Def($member)
+            } else {
+                $member
+            }
+        }
+    }
+    end {}           
+} #end Function New-Directory
 
 function New-Folder() {
 <# 
@@ -309,15 +464,13 @@ function Get-TfsConfigServer() {
     .DESCRIPTION
     The TFS Configuration Server is used for basic authentication and represents a connection to the server that is running Team Foundation Server. 
     .EXAMPLE
-    Get-TfsConfigServer "<Url to TFS>" "<Version of TSF Object Model to use>"
+    Get-TfsConfigServer "<Url to TFS>"
     .EXAMPLE
-    Get-TfsConfigServer "http://localhost:8080/tfs" "2013.4"
+    Get-TfsConfigServer "http://localhost:8080/tfs"
     .EXAMPLE 
-    gtfs "http://localhost:8080/tfs" "2013.4"
+    gtfs "http://localhost:8080/tfs"
     .PARAMETER url
     The Url of the TFS server that you'd like to access
-    .PARAMETER tfsVersion
-    The version of the TFS server that you'd like to load the object model of
 #>
 
     [CmdletBinding()]
@@ -329,7 +482,6 @@ function Get-TfsConfigServer() {
     begin {
         Write-Verbose "Loading TFS OM Assemblies for $targetVersion"
         Import-TFSAssemblies
-        $importCompleted = $true
     }
 
     process {
@@ -362,7 +514,7 @@ function Get-TfsTeamProjectCollectionIds() {
     .EXAMPLE
     Get-TfsTeamProjectCollectionIds $configServer
     .EXAMPLE
-    Get-TfsConfigServer "http://localhost:8080/tfs" "2013.4" | Get-TfsTeamProjectCollectionIds
+    Get-TfsConfigServer "http://localhost:8080/tfs" | Get-TfsTeamProjectCollectionIds
     .PARAMETER configServer
     The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
 #>
@@ -382,9 +534,86 @@ function Get-TfsTeamProjectCollectionIds() {
     end{}
 } #end Function Get-TfsTeamProjectCollectionIds
 
+function Get-TfsTeamProjectCollection() {
+<# 
+    .SYNOPSIS
+    Get a collection of Team Project Collection (TPC) Id
+    .DESCRIPTION
+    Get a collection of Team Project Collection (TPC) Id from the server provided
+    .EXAMPLE
+    Get-TfsTeamProjectCollectionIds $configServer
+    .EXAMPLE
+    Get-TfsConfigServer "http://localhost:8080/tfs" | Get-TfsTeamProjectCollectionIds
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+#>
+
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer, 
+        [parameter(Mandatory = $true)]
+        [guid]$teamProjectCollectionId
+
+    )
+    begin{}
+    process{
+        $configServer.GetTeamProjectCollection($teamProjectCollectionId)
+    }
+    end{}
+} #end function Get-TfsTeamProjectCollection
+
+function Get-TfsTeamProjects() {
+<# 
+    .SYNOPSIS
+    Get a collection of Team Projects from a Team Project Collection
+    .DESCRIPTION
+    Get a collection of Team Projects from a Team Project Collection (TPC) using the Id (guid) from the TPC object
+    .EXAMPLE
+    Get-TfsTeamProjects $configServer "000000-0000-000000-000000000" <--- GUID
+    .EXAMPLE
+    Get-TfsTeamProjects $cs <tpcID Here>
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER teamProjectCollectionId
+    The id (guid) of the TeamProjectCollection that you'd like to get a list of TeamProjects from
+#>
+
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer, 
+        [parameter(Mandatory = $true)]
+        [guid]$teamProjectCollectionId
+
+    )
+    begin{}
+    process{
+         $tpc = $configServer.GetTeamProjectCollection($teamProjectCollectionId)
+         #Get WorkItemStore
+         $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
+         #Get a list of TeamProjects
+         $wiService.Projects
+    }
+    end{}
+} #end function Get-TfsTeamProjects
+
+
 #adapted from http://blogs.msdn.com/b/alming/archive/2013/05/06/finding-subscriptions-in-tfs-2012-using-powershell.aspx
-function Get-TFSEventSubscriptions
-{
+function Get-TFSEventSubscriptions (){
+<# 
+    .SYNOPSIS
+    Get a collection of Event Subscriptions from a TFS AppTier
+    .DESCRIPTION
+    Get a collection of Events from a TFS AppTier server
+    Adapted from http://blogs.msdn.com/b/alming/archive/2013/05/06/finding-subscriptions-in-tfs-2012-using-powershell.aspx
+    .EXAMPLE
+    Get-TFSEventSubscriptions $configServer
+    .EXAMPLE
+    Get-TFSEventSubscriptions $cs <
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+#>
     [CmdLetBinding()]
     param(
         [parameter(Mandatory = $true)]
@@ -446,6 +675,27 @@ function Get-TFSEventSubscriptions
 }
 
 function Update-TfsXAMLBuildPlatformConfiguration(){
+<# 
+    .SYNOPSIS
+    Update Build Platform Configuration settings in XAML Build Definitions
+    .DESCRIPTION
+    Update Build Platform Configuration settings in XAML Build Definitions. Filter criteria may be optionally passed into target specific Build Definitions, all definitions
+    in a TeamProject, or all TeamProjects in a TeamProjectCollection
+    .EXAMPLE
+    Update-TfsXAMLBuildPlatformConfiguration $configServer
+    .EXAMPLE
+    Update-TfsXAMLBuildPlatformConfiguration $cs 
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER newPlatform
+    A required parameter. The string config setting of the desired new target platform
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+    .PARAMETER tpName
+    Optional filter to limit to TeamProjects with the name matching the passed in value
+    .PARAMETER buildName
+    Optional filter to limit to build definitions with the name matching the passed in value
+#>
     [CmdLetBinding(SupportsShouldProcess=$true)]
     param(
         [parameter(Mandatory = $true)]
@@ -468,6 +718,7 @@ function Update-TfsXAMLBuildPlatformConfiguration(){
             $tpc = $configServer.GetTeamProjectCollection($tpcId)
             if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
 
+            #Get BuildService
             $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
  
             #Get WorkItemStore
@@ -532,7 +783,7 @@ function Update-TfsXAMLBuildPlatformConfiguration(){
 
 function Backup-TfsWorkItems() {
 <# 
-.SYNOPSIS
+  .SYNOPSIS
   Work Item to CSV formatter
   .DESCRIPTION
   Simple function to dump the current state of a work item type to a csv format
@@ -579,7 +830,7 @@ function Backup-TfsWorkItems() {
             if (!$tpc.Name.ToLower().Contains(([string]$($tpcName)).ToLower())) { continue }
                 
             #Get WorkItemStore`
-            $wiService = New-Object "Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore" -ArgumentList $tpc
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
             $wiQuery = New-Object -TypeName "Microsoft.TeamFoundation.WorkItemTracking.Client.Query" -ArgumentList $wiService, $wiql
             $results = $wiQuery.RunQuery()
 
@@ -668,8 +919,7 @@ function Remove-TfsWorkItems() {
             Write-host "Destroying WI in TeamProjectCollection $($tpc.Name)" -foregroundcolor Yellow
                 
             #Get WorkItemStore
-            $wiService = New-Object "Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore" -ArgumentList $tpc
-        
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
             #Get a list of TeamProjects
             $tps = $wiService.Projects
 
@@ -706,12 +956,12 @@ function Remove-TfsWorkItems() {
 
 function Remove-TfsWorkItemTemplate() {
 <# 
-.SYNOPSIS
-  Describe the function here
+  .SYNOPSIS
+  This CmdLet is used to remove a WorkItemTemplate from a TeamProject
   .DESCRIPTION
-  Describe the function in more detail
+  This CmdLet is used to remove a WorkItemTemplate from a TeamProject
   .EXAMPLE
-  Destroy-TfsWorkItemTemplate "http://<TFS Server>:8080/tfs/" "2013.4" "ProjectCollection01" "<Team Project Name>" "Bug"
+  Destroy-TfsWorkItemTemplate "http://<TFS Server>:8080/tfs/" "ProjectCollection01" "<Team Project Name>" "Bug"
   .PARAMETER configServer
    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
   .PARAMETER tpcName
@@ -763,7 +1013,7 @@ function Remove-TfsWorkItemTemplate() {
             Write-Verbose "Preparing to destroy WIT in TeamProjectCollection $($tpc.Name) - $($witType)" 
                 
             #Get WorkItemStore
-            $wiService = New-Object "Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore" -ArgumentList $tpc
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
         
             #Get a list of TeamProjects
             $tps = $wiService.Projects
@@ -795,52 +1045,22 @@ function Remove-TfsWorkItemTemplate() {
     end{}
 } #end Function Destroy-TfsWorkItemTemplate
 
-function Import-TfsWorkItemTemplate() {
-<# 
-  .SYNOPSIS
-  Import TFS Work Item Templates
-  .DESCRIPTION
-  Import a folder of TFS Work Item Template Xml Documents
-  .EXAMPLE
-  Import-TfsWorkItemTemplate $configServer "ProjectCollection01" "<Team Project Name>" "C:\TFS\WITD_Files"
-  .PARAMETER configServer
-   The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
-  .PARAMETER tpcName
-  The name of the Team Project Collection that contains the Team Project
-  .PARAMETER tpName
-  The type of the work items that you would like to convert to a CSV format
-  .PARAMETER sourcePath
-  The folder in which to find WIT Template .xml files
-#>
-
-    [CmdLetBinding()]
-    param(
-        [parameter(Mandatory = $true, ValueFromPipeLine = $true)]
-        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
-        [parameter(Mandatory = $true)]
-        [string] $tpcName,
-        [parameter(Mandatory = $true)]
-        [string] $tpName,
-        [parameter(Mandatory = $true)]
-        [string] $sourcePath)
-
-    begin{
-        $filesToImport = Get-ChildItem -Path $sourcePath
-    }
-    process {
-       foreach ($file in $filesToImport){
-            
-            if ($file.Extension -ne ".xml" -or $file.Name.Contains("categories")) { continue }
-            
-            $fileName = $($file.FullName);
-            $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
-            & $witadmin importwitd /collection:$tpcUrl /p:"$tpName" /f:"$fileName"
-        }
-    }
-    end{}
-}
-
 function Find-TfsFieldDescription{
+    <# 
+      .SYNOPSIS
+      Find a TFS Field description
+      .DESCRIPTION
+      In a TFS TeamProject, Work Items contain fields and these fields are common across the entire TeamProjectCollection. This function helps discover them so
+      they can be better understood in the event of conflicts or the desire to make changes
+      .EXAMPLE
+      Find-TfsFieldDescription $configServer "ProjectCollection01" "AreaPath"
+      .PARAMETER configServer
+       The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+      .PARAMETER tpcName
+      The name of the Team Project Collection that contains the field
+      .PARAMETER refNameContains
+      The RefName value for the field that you are looking for
+    #>
 
     [CmdLetBinding()]
     param(
@@ -876,7 +1096,18 @@ function Find-TfsFieldDescription{
 
 
 function Update-TfsFieldNames {
-
+    <# 
+      .SYNOPSIS
+      Update some WIT Field Names to be modern
+      .DESCRIPTION
+      Update some WIT Field Names to be modern      
+      .EXAMPLE
+      Update-TfsFieldNames $configServer "ProjectCollection01" 
+      .PARAMETER configServer
+       The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+      .PARAMETER tpcName
+      The name of the Team Project Collection that contains the field
+    #>
     [CmdLetBinding()]
     param(
         [parameter(Mandatory = $true)]
@@ -907,11 +1138,10 @@ function Update-TfsFieldNames {
 function Update-TfsWorkItemTemplate() {
 <# 
   .SYNOPSIS
-  Import TFS Work Item Templates
+  Update TFS Work Item Templates
   .DESCRIPTION
   When Importing Work Item Template files into some Team Projects, slight modifications need to be made to those files so that they will
   import correctly between versions of TFS
-
   Looking at the source of this function, you can Add Rules as required
   .EXAMPLE
   Update-TfsWorkItemTemplate "C:\TFS\Original_WITD_Files\" "C:\TFS\Modified_WITD_Files\"
@@ -920,7 +1150,6 @@ function Update-TfsWorkItemTemplate() {
   .PARAMETER targetPath
   The folder in which to place the modified WIT Template .xml files
 #>
-
     [CmdLetBinding()]
     param(
         [parameter(Mandatory=$true, ValueFromPipeline=$false)]
@@ -952,8 +1181,67 @@ function Update-TfsWorkItemTemplate() {
     end{}
 }
 
-function Get-TfsTeamProjectCollectionAnalysis() {
+function Import-TfsWorkItemTemplate() {
+    <# 
+      .SYNOPSIS
+      Import TFS Work Item Templates
+      .DESCRIPTION
+      Import a folder of TFS Work Item Template Xml Documents
+      .EXAMPLE
+      Import-TfsWorkItemTemplate $configServer "ProjectCollection01" "<Team Project Name>" "C:\TFS\WITD_Files"
+      .PARAMETER configServer
+       The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+      .PARAMETER tpcName
+      The name of the Team Project Collection that contains the Team Project
+      .PARAMETER tpName
+      The type of the work items that you would like to convert to a CSV format
+      .PARAMETER sourcePath
+      The folder in which to find WIT Template .xml files
+    #>
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true, ValueFromPipeLine = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [string] $tpcName,
+        [parameter(Mandatory = $true)]
+        [string] $tpName,
+        [parameter(Mandatory = $true)]
+        [string] $sourcePath)
 
+    begin{
+        $filesToImport = Get-ChildItem -Path $sourcePath
+    }
+    process {
+       foreach ($file in $filesToImport){
+            
+            if ($file.Extension -ne ".xml" -or $file.Name.Contains("categories")) { continue }
+            
+            $fileName = $($file.FullName);
+            $tpcUrl =  "$($configServer.Uri.AbsoluteUri)/$tpcName"
+            & $witadmin importwitd /collection:$tpcUrl /p:"$tpName" /f:"$fileName"
+        }
+    }
+    end{}
+}
+
+function Get-TfsTeamProjectCollectionAnalysis() {
+<# 
+  .SYNOPSIS
+  Generate an fingerprint (identification) analysis of the TeamProjects in a TFS implementation 
+  .DESCRIPTION
+  In order to facilitate the analysis of a large TFS implementation with multiple TeamProjectCollections and numerous TeamProjects within the collections,
+  this CmdLet will generate a "fingerprint" report which tries to identify "types" of WIT (and consequently, ProcessTemplates) that are in-place in all the
+  TeamProjects in a TFS server
+  .EXAMPLE
+  Get-TfsTeamProjectCollectionAnalysis $configServer "C:\AnalysisResults\"
+  .EXAMPLE
+  Get-TfsTeamProjectCollectionAnalysis $configServer -Folder "C:\AnalysisResults\"
+  .PARAMETER configServer
+  The ConfigurationServer object pointing at the TFS AppTier under analysis
+  .PARAMETER analysisRoot
+  The folder in which to place the files generated by the Analysis
+#>
     [CmdLetBinding()]
     param(
         [parameter(Mandatory = $true, ValueFromPipeLine = $true)]
@@ -990,7 +1278,7 @@ function Get-TfsTeamProjectCollectionAnalysis() {
             $allReposInTPC = $vcs.GetItems("`$/", $vspec, $recursionTypeOne, $deletedState, $itemType, $false).Items
 
             Write-Verbose "Get WorKItemStore for $($tpc.Name)"
-            $wiService = New-Object "Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore" -ArgumentList $tpc
+            $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
         
             Write-Verbose "Get list of TeamProjects from WorkItemStore for $($tpc.Name)"
             $tps = $wiService.Projects
@@ -1104,6 +1392,10 @@ function Get-TfsTeamProjectCollectionAnalysis() {
 }
 
 function Save-TfsCleanedWITD(){
+<# 
+    .SYNOPSIS 
+    Used by TPC Analysis CmdLet
+#>
     [CmdLetBinding()]
     param(
         [parameter(Mandatory = $true)]
@@ -1148,7 +1440,32 @@ function Save-TfsCleanedWITD(){
         [void]$witd.Save($fileLocation)
     }
 }
+
 function Get-TfsXAMLBuildsCreatingWorkItems(){
+<# 
+    .SYNOPSIS
+    Get a list of XAML Build definitions that are configured to create work items on failure
+    .DESCRIPTION
+    Create a list of all the build definitions that have been created and/or configured to create work items on build failure.
+    .EXAMPLE
+    Get-TfsXAMLBuildsCreatingWorkItems $configServer
+    .EXAMPLE
+    Get-TfsXAMLBuildsCreatingWorkItems $configServer "ProjectCollection01"
+    .EXAMPLE
+    Get-TfsXAMLBuildsCreatingWorkItems $configServer "ProjectCollection01" "(ADWAT)" 
+    .EXAMPLE
+    Get-TfsXAMLBuildsCreatingWorkItems $configServer "ProjectCollection01" "(ADWAT)" "CI Build"
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER newPlatform
+    A required parameter. The string config setting of the desired new target platform
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+    .PARAMETER tpName
+    Optional filter to limit to TeamProjects with the name matching the passed in value
+    .PARAMETER buildName
+    Optional filter to limit to build definitions with the name matching the passed in value
+#>
     [CmdLetBinding(SupportsShouldProcess=$true)]
     param(
         [parameter(Mandatory = $true)]
@@ -1171,7 +1488,7 @@ function Get-TfsXAMLBuildsCreatingWorkItems(){
         {
             #Get TPC instance
             $tpc = $configServer.GetTeamProjectCollection($tpcId)
-            if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
+            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$tpc.Name.Contains($tpcName)) ) { continue; }
 
             $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
  
@@ -1205,6 +1522,33 @@ function Get-TfsXAMLBuildsCreatingWorkItems(){
 }
 
 function Update-TfsXAMLBuildDefintionDropFolder(){
+<# 
+    .SYNOPSIS
+    Update the build drop folder for a collection of build definitions
+    .DESCRIPTION
+    This CmdLet will change the drop folder configuration setting for the targeted build definitions.
+    .EXAMPLE
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "\\coc\it\GIS-TFS\testing-builds\"
+    .EXAMPLE
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "\\coc\it\GIS-TFS\testing-builds\" "ProjectCollection01"
+    .EXAMPLE
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "\\coc\it\GIS-TFS\testing-builds\" "ProjectCollection01" "(ADWAT)" 
+    .EXAMPLE
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "\\coc\it\GIS-TFS\testing-builds\" "ProjectCollection01" "(ADWAT)" "CI Build"
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER newFolder
+    The new drop folder for the targeted build definitions
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+    .PARAMETER tpName
+    Optional filter to limit to TeamProjects with the name matching the passed in value
+    .PARAMETER buildName
+    Optional filter to limit to build definitions with the name matching the passed in value
+    .PARAMETER useFullName
+    Use the Full Name of the TeamProject as the leaf folder of the supplied central drop folder. Otherwise, the ID of the TeamProject will be used
+    This option is provided to shorten up file paths
+#>
     [CmdLetBinding(SupportsShouldProcess=$true)]
     param(
         [parameter(Mandatory = $true)]
@@ -1221,10 +1565,10 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
         [boolean]$useFullName
     )
    begin{
-        if (!(Test-Path -Path $folderPath)){
+        if (!(Test-Path -Path $newFolder)){
             Write-Error "The folder path requested does not exist"
         } else {
-            $path = Get-Item -Path $folderPath 
+            $path = Get-Item -Path $newFolder 
             $newFolder = $path.PSPath
         }
    }
@@ -1234,7 +1578,7 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
         {
             #Get TPC instance
             $tpc = $configServer.GetTeamProjectCollection($tpcId)
-            if (![string]::IsNullorWhiteSpace($tpcName) -and ($tpcName -ne $tpc.Name) ) { continue; }
+            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$tpc.Name.ToLower().Contains($tpcName.ToLower())) ) { continue; }
 
             $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
  
@@ -1246,7 +1590,7 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
             #iterate through the TeamProjects
             foreach ($tp in $tps)
             { 
-                if( ![string]::IsNullorWhiteSpace($tpName) -and ($tpName -ne $tp.Name) ) { continue;}
+                if (![string]::IsNullorWhiteSpace($tpcName) -and (!$tpc.Name.ToLower().Contains($tpcName.ToLower())) ) { continue; }
 
                 $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
                                
@@ -1301,6 +1645,30 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
 }
 
 function Request-TfsXAMLBuild(){
+<# 
+    .SYNOPSIS
+    Queue a TFS XAML Build
+    .DESCRIPTION
+    This CmdLet will queue a build (or multiple builds) based on the filter criteria provided
+    .EXAMPLE
+    Request-TfsXAMLBuild $configServer 
+    .EXAMPLE
+    Request-TfsXAMLBuild $configServer "ProjectCollection01"
+    .EXAMPLE
+    Request-TfsXAMLBuild $configServer "ProjectCollection01" "(ADWAT)" 
+    .EXAMPLE
+    Request-TfsXAMLBuild $configServer "ProjectCollection01" "(ADWAT)" "CI Build"
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER newFolder
+    The new drop folder for the targeted build definitions
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+    .PARAMETER tpName
+    Optional filter to limit to TeamProjects with the name matching the passed in value
+    .PARAMETER buildName
+    Optional filter to limit to build definitions with the name matching the passed in value
+#>
     [CmdLetBinding(SupportsShouldProcess=$true)]
     param(
         [parameter(Mandatory = $true)]
@@ -1313,19 +1681,40 @@ function Request-TfsXAMLBuild(){
         [string]$tpName,
         [parameter(Mandatory = $false)]
         [alias("Build")]
-        [string]$buildName
+        [string]$buildName,
+        [switch] $ShowProgress,
+        [switch] $DoNotDelete,
+        [switch] $DoNotSaveJSON
     )
-   begin {}
+   begin {
+        $tpcName = $tpcName.ToLower()
+        $tpName = $tpName.ToLower()
+        $buildName = $buildName.ToLower()
+   }
    process{
+        $request = @{}
+
+        $request.RequestedOn = [DateTime]::Now
+        $request.RequestedBy = $configServer.AuthorizedIdentity.DisplayName
+
+        $request.Parameters = @{}
+        $Request.Parameters.TFSServer = $configServer.Uri.AbsoluteUri
+        $request.Parameters.TPCParam = $tpcName
+        $request.Parameters.TPParam = $tpName
+        $request.Parameters.BuildParam = $buildName
+
         $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
         foreach($tpcId in $tpcIds)
         {
             #Get TPC instance
             $tpc = $configServer.GetTeamProjectCollection($tpcId)
-            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$tpc.Name.Contains($tpcName)) ) { continue; }
+            $foundTPCName = $tpc.Name.ToLower()
+            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$foundTPCName.Contains($tpcName)) ) { continue; }
 
             $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
- 
+            
+            [array]$builds = @()
+
             #Get WorkItemStore
             $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
             #Get a list of TeamProjects
@@ -1334,16 +1723,27 @@ function Request-TfsXAMLBuild(){
             #iterate through the TeamProjects
             foreach ($tp in $tps)
             { 
-                if( ![string]::IsNullorWhiteSpace($tpName) -and (!$tp.Name.Contains($tpName)) ) { continue;}
+                $foundTPName = $tp.Name.ToLower()
+                if( ![string]::IsNullorWhiteSpace($tpName) -and (!$foundTPName.Contains($tpName)) ) { continue;}
 
                 $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
-                               
-                [array]$bdefs = ,
-                [array]$actions = @(, @())
+                if (($buildDefinitionList -eq $null) -or ($buildDefinitionList.Length -le 0)) {continue}
+
+                [array]$bdefs = @()
+
+                $build = @{}
+                $build.TPC = $tpc.Name
+                $build.TP = $tp.Name
+
+
                 foreach ($bdef in $buildDefinitionList)
                 {
-                    if( ![string]::IsNullorWhiteSpace($buildName) -and ($buildName -ne $bdef.Name) ) { continue;}
-                    
+                    $foundBuildName = $bdef.Name.ToLower()
+                    if( ![string]::IsNullorWhiteSpace($buildName) -and ($buildName -ne $foundBuildName) ) { continue;}
+                   
+                    $defn = @{}
+                    $defn.Name = $bdef.Name
+
                     $queuedBuild = $null
                     
                     if (!$WhatIfPreference) {
@@ -1372,24 +1772,242 @@ function Request-TfsXAMLBuild(){
                                 ($inProgressBuild.Status -eq [Microsoft.TeamFoundation.Build.Client.BuildStatus]::PartiallySucceeded) -or
                                 ($inProgressBuild.Status -eq [Microsoft.TeamFoundation.Build.Client.BuildStatus]::Succeeded))
                             {
+                                # sometimes the log file location isn't populated when we get the build status
+                                # it does not always populate though so we'll try 5 times, waiting 2 seconds between, and then give up getting 
+                                # a list of errors
+                                if ($inProgressBuild.LogLocation -eq $null){
+                                    Start-Sleep -s 2
+                                    for($j = 0; $j -le 5; $j++){
+                                        $inProgressBuild = $bs.GetBuild($buildUri)
+                                        if ($inProgressBuild.LogLocation -ne $null) { break }
+                                    }
+                                }
                                 $buildFinished = $true;
-                                Write-Host "$($tp.Name) build completed in $i seconds with status of $($inProgressBuild.Status)."
+                                $now = [DateTime]::Now.ToLocalTime()
+                                Write-Host "$now : $($tpc.Name)-$($tp.Name):$($bdef.Name) build completed in $i seconds with status of " -NoNewline
+                                switch($inProgressBuild.Status)
+                                {
+                                    "Failed" { Write-Host "$($inProgressBuild.Status)." -ForegroundColor Red; $defn.FinalState = "Failed";}
+                                    "PartiallySucceeded" { Write-Host "$($inProgressBuild.Status)." -ForegroundColor Yellow; $defn.FinalState = "PartiallySucceeded";}
+                                    "Succeeded" { Write-Host "$($inProgressBuild.Status)." -ForegroundColor Green; $defn.FinalState = "Success";}
+                                }
+                                
+                                if(($inProgressBuild.Status -eq "Failed") -or ($inProgressBuild.Status -eq "PartiallySucceeded")) 
+                                {
+                                    if ($inProgressBuild.LogLocation -ne $null){
+                                        $log = Get-Content -LiteralPath $inProgressBuild.LogLocation | ? {$_.Contains(" error ")} 
+                                        $log | % { Write-Host $_ -ForegroundColor Red  }
+                                        $defn.Errors = $log | % { [string]$_ }
+                                    } else {
+                                        $defn.Errors = @("There was a failed build but the log file was not available.", "Please re-run the build and review the build output")
+                                    }
+                                } 
+                                
+                                #Only failed builds have this value populated
+                                if($inProgressBuild.Status -eq "Failed")
+                                {
+                                    $defn.LastGoodBuild = $bs.GetAllBuildDetails($bdef.LastGoodBuildUri).FinishTime
+                                }
+
+                                $defn.StartTime = $inProgressBuild.StartTime
+                                $defn.FinishTime = $inProgressBuild.FinishTime
+                                $defn.Duration = New-TimeSpan –Start $inProgressBuild.StartTime –End $inProgressBuild.FinishTime
+
+                                #If the switch is present, do not delete
+                                if ($DoNotDelete -eq $false){
+                                    #delete build artifacts from TFS
+                                    $bSpec = $bs.CreateBuildDetailSpec($tp.Name, $bdef.Name)
+                                    $bSpec.QueryOptions = [Microsoft.TeamFoundation.Build.Client.QueryOptions]::None
+                                    $bSpec.InformationTypes = $null
+                                    $bSpec.QueryDeletedOption = [Microsoft.TeamFoundation.Build.Client.QueryDeletedOption]::ExcludeDeleted
+                                    $targetBuild = $bs.QueryBuilds($bSpec).Builds | ? { $_.Uri -eq $inProgressBuild.Uri}
+                                    $bs.DeleteBuilds($targetBuild, [Microsoft.TeamFoundation.Build.Client.DeleteOptions]::All) | Out-Null
+
+                                    # delete scratch directory
+                                    $agentUri = $inProgressBuild.Information.GetNodesByType("AgentScopeActivityTracking", $true).Fields["ReservedAgentUri"]
+                                    $agentDetails = $bs.QueryBuildAgentsByUri($agentUri);
+                                    $buildPath = $agentDetails.GetExpandedBuildDirectory($bdef).Split("/")
+                                    $drive = $buildPath[0].Replace(":", "$")
+                               
+                                    #compose network path and delete scratch directory to conserve space
+                                    $pathToScratch = [string]::Format("\\{0}\{1}", $agentDetails.MachineName, $drive)
+                                    cmd /c rmdir /S /Q $pathToScratch
+                                }
                             }
                             else{
                                 $i++
-                                Write-Host "$($tpc.Name)-$($tp.Name):$($bdef.Name) is currently $($inProgressBuild.Status) ($i seconds)"
+                                if ($ShowProgress){
+                                    $progressPercentage = $i
+                                    if ($progressPercentage -ge 100){
+                                        $progressPercentage = $i/100 
+                                    }
+                                    Write-Progress -Activity "Building $($tpc.Name)-$($tp.Name):$($bdef.Name)" -Status $($inProgressBuild.Status) -PercentComplete $progressPercentage
+                                }
                                 Start-Sleep -s 1
                             }
                         }
                     }
+
+                    $bdefs += $defn
                 }
+                
+                $build.Definitions = $bdefs
+                $builds += $build
             }
+            $request.Builds = $builds
+        }
+        #if the switch is present, do not create JSON file
+        if ($DoNotSaveJSON -eq $false){
+            $json = "var data = "
+            $json += ConvertTo-Json $request -Depth 5
+            $json += ";"
+            $now = [DateTime]::Now
+            $fileName_Postfix = "$($now.Year)$($now.Month)$($now.Day)$($now.Hour)$($now.Minute).$($now.Second)"
+            $fileName ="C:\TFS\Build_report_data_" + $fileName_Postfix + ".js"
+            $json | Out-File $fileName
+            $json
         }
    }
    end{}
 }
 
+function Get-TfsXAMLBuilds(){
+<# 
+    .SYNOPSIS
+    List all queued or in-progress TFS XAML Builds
+    .DESCRIPTION
+    This CmdLet will list all of the currently queued or in-progress builds (or multiple builds) based on the filter criteria provided
+    .EXAMPLE
+    Get-TfsXAMLBuilds $configServer 
+    .EXAMPLE
+    Get-TfsXAMLBuilds $configServer "ProjectCollection01"
+    .EXAMPLE
+    Get-TfsXAMLBuilds $configServer "ProjectCollection01" "(ADWAT)" 
+    .EXAMPLE
+    Get-TfsXAMLBuilds $configServer "ProjectCollection01" "(ADWAT)" "CI Build"
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+    .PARAMETER tpName
+    Optional filter to limit to TeamProjects with the name matching the passed in value
+    .PARAMETER buildName
+    Optional filter to limit to build definitions with the name matching the passed in value
+#>
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $false)]
+        [alias("TPC", "TeamProjectCollection")]
+        [string]$tpcName,
+        [parameter(Mandatory = $false)]
+        [alias("TP", "TeamProject", "Project")]
+        [string]$tpName,
+        [parameter(Mandatory = $false)]
+        [alias("Build")]
+        [string]$buildName
+    )
+   begin {
+        $tpcName = $tpcName.ToLower()
+        $tpName = $tpName.ToLower()
+        $buildName = $buildName.ToLower()
+   }
+   process{
+ 
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        
+        $queuedBuilds = @()
+        $activeBuilds = @()
+
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            $foundTPCName = $tpc.Name.ToLower()
+            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$foundTPCName.Contains($tpcName)) ) { continue; }
+
+            $bs = $tpc.GetService([Microsoft.TeamFoundation.Build.Client.IBuildServer])
+            
+            #Get List of TPs
+            [guid[]]$param1 = ([Microsoft.TeamFoundation.Framework.Common.CatalogResourceTypes]::TeamProject) 
+            $tps = $tpc.CatalogNode.QueryChildren($param1, $false, [Microsoft.TeamFoundation.Framework.Common.CatalogQueryOptions]::None) | % {$_.Resource.DisplayName } | Sort-Object
+
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                $foundTPName = $tp.ToLower()
+                if( ![string]::IsNullorWhiteSpace($tpName) -and (!$foundTPName.Contains($tpName)) ) { continue;}
+               
+                #Query for active builds
+                $specs = @($bs.CreateBuildQueueSpec($tp), $bs.CreateBuildQueueSpec($tp))
+                $specs[0].Status =  [Microsoft.TeamFoundation.Build.Client.QueueStatus]::Queued
+                $specs[1].Status =  [Microsoft.TeamFoundation.Build.Client.QueueStatus]::InProgress
+                $builds = $bs.QueryQueuedBuilds($specs) 
+                    
+                $builds[0].QueuedBuilds | % { $queuedBuilds += $_ }
+                $builds[1].QueuedBuilds | % { $activeBuilds += $_ }
+            }
+        }
+
+        if ($VerbosePreference -eq "continue") {
+            Write-Host "`nQUEUED BUILDS" -ForegroundColor Yellow
+            if ($queuedBuilds.Length -eq 0) {
+                Write-Host "There are no builds queued based on the filter parameters provided." -ForegroundColor Red
+            } else {
+                foreach ($response in $queuedBuilds){
+                    Write-Host $([string]::Format("`nTeamProject: {0}", $response.TeamProject ))
+                    Write-Host $([string]::Format("Requested By: {0}", $response.RequestedBy ))
+                    Write-Host $([string]::Format("Requested On: {0}", $response.QueueTime ))
+                    Write-Host $([string]::Format("Definition: {0}", $response.BuildDefinition.FullPath ))
+                }
+            }
+
+            Write-Host "`nInProgress BUILDS" -ForegroundColor Green
+            if ($activeBuilds.Length -eq 0) {
+                Write-Host "There are no builds InProgress based on the filter parameters provided." -ForegroundColor Red
+            } else {
+                foreach ($response in $activeBuilds){
+                    Write-Host $([string]::Format("`nTeamProject: {0}", $response.TeamProject ))
+                    Write-Host $([string]::Format("Requested By: {0}", $response.RequestedBy ))
+                    Write-Host $([string]::Format("Requested On: {0}", $response.QueueTime ))
+                    Write-Host $([string]::Format("Definition: {0}", $response.BuildDefinition.FullPath ))
+                }
+            }
+        }
+        $report = @{}
+        $report.QueuedBuilds = $queuedBuilds
+        $report.ActiveBulds = $activeBuilds
+        $report
+   }
+   end{}
+}
+
 function Update-TfsXAMLBuildDefintionCurrentController(){
+<# 
+    .SYNOPSIS
+    Update the build controller for a collection of build definitions
+    .DESCRIPTION
+    This CmdLet will change the configured build controller configuration setting for the targeted build definitions.
+    .EXAMPLE
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "newControllerName"
+    .EXAMPLE
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "newControllerName" "ProjectCollection01"
+    .EXAMPLE                                             
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "newControllerName" "ProjectCollection01" "(ADWAT)" 
+    .EXAMPLE                                             
+    Update-TfsXAMLBuildDefintionDropFolder $configServer "newControllerName" "ProjectCollection01" "(ADWAT)" "CI Build"
+    .PARAMETER configServer
+    The TfsConfigurationServer object that represents a connection to TFS server that you'd like to access
+    .PARAMETER newController
+    The name of the new build controller for the targeted build definitions
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+    .PARAMETER tpName
+    Optional filter to limit to TeamProjects with the name matching the passed in value
+    .PARAMETER buildName
+    Optional filter to limit to build definitions with the name matching the passed in value
+#>
     [CmdLetBinding(SupportsShouldProcess=$true)]
     param(
         [parameter(Mandatory = $true)]
@@ -1481,15 +2099,61 @@ function Update-TfsXAMLBuildDefintionCurrentController(){
    end{}
 }
 
+function Get-TfsUsers(){
+<# 
+    .SYNOPSIS
+    Get a list of all Domain Users that TFS knows about
+    .DESCRIPTION
+    This CmdLet will list all of the users who TFS would know about from a permissions, feature enablement, or group membership perspective
+    .EXAMPLE
+    Get-TfsUsers $configServer 
+    .EXAMPLE
+    Get-TfsUsers $configServer "ProjectCollection01"
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+#>
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $false)]
+        [alias("TPC", "TeamProjectCollection")]
+        [string]$tpcName
+    )
+
+    begin{
+        $tpcName = $tpcName.ToLower()
+    }
+    process {
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            $foundTPCName = $tpc.Name.ToLower()
+            if (![string]::IsNullorWhiteSpace($tpcName) -and (!$foundTPCName.Contains($tpcName)) ) { continue; }
+
+            $gss = $tpc.GetService([Microsoft.TeamFoundation.Server.IGroupSecurityService])
+            $sids = $gss.ReadIdentity([Microsoft.TeamFoundation.Server.SearchFactor]::AccountName, "Project Collection Valid Users", [Microsoft.TeamFoundation.Server.QueryMembership]::Expanded)
+            $userIds = $gss.ReadIdentities([Microsoft.TeamFoundation.Server.SearchFactor]::Sid, $sids.Members, [Microsoft.TeamFoundation.Server.QueryMembership]::None)
+            #$filtered = $userIds | ? {$_.DisplayName.Contains("IDM Review Active") -ne $true} | ? {$_.Type -ne "ApplicationGroup"}
+            $userIds
+        }
+    }
+    end{}
+}
+
+
 Set-Alias gh Get-Hash
 Set-Alias gtfs Get-TfsConfigServer
+Set-Alias gd Get-Definition
 
 Export-ModuleMember -Alias *
-Export-ModuleMember -Function "New-Folder", "Get-Hash", "Switch-ChildNodes", "Remove-Nodes"
+Export-ModuleMember -Function "New-Folder", "Get-Hash", "Switch-ChildNodes", "Remove-Nodes", "Select-WriteHost", "Get-Definition"
 Export-ModuleMember -Function "Get-Nuget", "Get-TfsAssembliesFromNuget"
-Export-ModuleMember -Function "Get-TfsConfigServer", "Get-TfsTeamProjectCollectionIds"
-Export-ModuleMember -Function "Get-TfsEventSubscriptions"
-Export-ModuleMember -Function "Request-TfsXAMLBuild", "Update-TfsXAMLBuildPlatformConfiguration", "Update-TfsXAMLBuildDefintionCurrentController", "Update-TfsXAMLBuildDefintionDropFolder", "Get-TfsXAMLBuildsCreatingWorkItems"
+Export-ModuleMember -Function "Get-TfsConfigServer", "Get-TfsTeamProjectCollectionIds", "Get-TfsTeamProjects", "Get-TfsTeamProjectCollection"
+Export-ModuleMember -Function "Get-TfsEventSubscriptions", "Get-TfsUsers"
+Export-ModuleMember -Function "Request-TfsXAMLBuild", "Update-TfsXAMLBuildPlatformConfiguration", "Update-TfsXAMLBuildDefintionCurrentController", "Update-TfsXAMLBuildDefintionDropFolder", "Get-TfsXAMLBuildsCreatingWorkItems", "Get-TfsXAMLBuilds"
 Export-ModuleMember -Function "Backup-TfsWorkItems", "Remove-TfsWorkItems", "Remove-TfsWorkItemTemplate", "Import-TfsWorkItemTemplate", "Update-TfsWorkItemTemplate", "Save-TfsCleanedWITD"
 Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis"
 Export-ModuleMember -Function "Update-TfsFieldNames", "Find-TfsFieldDescription"
