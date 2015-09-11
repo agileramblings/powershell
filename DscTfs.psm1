@@ -26,8 +26,9 @@ $ModuleRoot = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
 $omBinFolder = $("$ModuleRoot\TFSOM\bin\")
 
 
-function Select-WriteHost
-{
+[string]$targetVersion = "2015"
+
+function Select-WriteHost {
    [CmdletBinding(DefaultParameterSetName = 'FromPipeline')]
    param(
      [Parameter(ValueFromPipeline = $true, ParameterSetName = 'FromPipeline')]
@@ -141,7 +142,7 @@ function Get-Nuget(){
     	Set-Alias nuget $targetNugetExe -Scope Global -Verbose
     }
     end{}
-}
+} #end function Get-Nuget
 
 function Get-TfsAssembliesFromNuget(){
 <# 
@@ -186,7 +187,7 @@ function Get-TfsAssembliesFromNuget(){
     }
     end{}
 
-}
+} #end function Get-TfsAssembliesFromNuget
 
 function Import-TFSAssemblies() {
 <# 
@@ -221,9 +222,7 @@ function Import-TFSAssemblies() {
         }
     }
     end{}
-}
-
-[string]$targetVersion = "2015"
+} #end function Import-TFSAssemblies
 
 function Get-Definition() {
 <# 
@@ -297,7 +296,7 @@ function Get-Definition() {
         }
     }
     end {}           
-} #end Function New-Directory
+} #end Function Get-Definition
 
 function New-Folder() {
 <# 
@@ -323,9 +322,8 @@ function New-Folder() {
             Get-Item -Path $folderPath
         }
     }           
-} #end Function New-Directory
+} #end Function New-Folder
 
-# better Remove-Item functions -- $RC
 function Get-Tree() { 
     [CmdLetBinding()]
     param(
@@ -338,7 +336,7 @@ function Get-Tree() {
         (Get-ChildItem $Path -Recurse -Include $Include) | 
         sort pspath -Descending -unique
 	}
-} 
+} #end function Get-Tree - better Remove-Item functions -- $RC
 
 function Remove-Tree() {
 	[CmdLetBinding()]
@@ -350,7 +348,7 @@ function Remove-Tree() {
 	{
 		Get-Tree $Path $Include | Remove-Item -force -recurse
 	}
-}
+} #end function Remove-Tree
 
 function Get-Hash() {
 <# 
@@ -598,8 +596,6 @@ function Get-TfsTeamProjects() {
     end{}
 } #end function Get-TfsTeamProjects
 
-
-#adapted from http://blogs.msdn.com/b/alming/archive/2013/05/06/finding-subscriptions-in-tfs-2012-using-powershell.aspx
 function Get-TFSEventSubscriptions (){
 <# 
     .SYNOPSIS
@@ -672,7 +668,7 @@ function Get-TFSEventSubscriptions (){
     }
    }
    end{}
-}
+} # end function Get-TFSEventSubscriptions
 
 function Update-TfsXAMLBuildPlatformConfiguration(){
 <# 
@@ -779,7 +775,7 @@ function Update-TfsXAMLBuildPlatformConfiguration(){
         }
    }
    end{}
-}
+} #end function Update-TfsXAMLBuildPlatformConfiguration
 
 function Backup-TfsWorkItems() {
 <# 
@@ -807,62 +803,81 @@ function Backup-TfsWorkItems() {
     param(
         [parameter(Mandatory = $true)]
         [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
-        [parameter(Mandatory = $true)]
         [string]$tpcName,
-        [parameter(Mandatory = $true)]
         [string]$tpName,
-        [parameter(Mandatory = $true)]
         [string]$witType,
         [parameter(Mandatory = $true)]
         [string]$rootFolder)
 
     begin{
+        $tpcName = $tpcName.ToLower()
+        $tpName = $tpName.ToLower()
     }
 
     process {
-        $wiql = "SELECT [System.ID], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = '$witType'  AND [System.TeamProject] = '$tpName' ORDER BY [Changed Date] DESC"
         $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
-
         foreach($tpcId in $tpcIds){
             #Get TPC instance
             [Microsoft.TeamFoundation.Client.TfsTeamProjectCollection]$tpc = $configServer.GetTeamProjectCollection($tpcId)
 
-            if (!$tpc.Name.ToLower().Contains(([string]$($tpcName)).ToLower())) { continue }
+            if (ShouldSkip $tpc.Name $tpcName) { continue }
                 
             #Get WorkItemStore`
             $wiService = $tpc.GetService([Microsoft.TeamFoundation.WorkItemTracking.Client.WorkItemStore])
-            $wiQuery = New-Object -TypeName "Microsoft.TeamFoundation.WorkItemTracking.Client.Query" -ArgumentList $wiService, $wiql
-            $results = $wiQuery.RunQuery()
+            #Get a list of TeamProjects
+            $tps = $wiService.Projects
 
-            if ($results.Count -gt 0) {
-                
+            #iterate through the TeamProjects
+            foreach ($tp in $tps)
+            { 
+                $name = $tp.Name
+                if (ShouldSkip $name $tpName) { continue }
+
+                $workItemTypes = $tp.WorkItemTypes | % {$_.Name}
+               
+
                 $folder = New-Folder $rootFolder
-                $folder.CreateSubdirectory("WorkItemArchive\$tpcName\$tpName")
+                $subDir = "WorkItemArchive\$($tpc.Uri.Segments[-1])\$name"
+                $dumpFolder = $folder.CreateSubdirectory($subDir)
+                Remove-Item "$($dumpFolder.FullName)\*" -Recurse -Force
 
-                [PSObject[]]$csv = @()
+                foreach($type in $workItemTypes)
+                {
+                    if (ShouldSkip $type $witType) { continue }
 
-                foreach($result in $results){
-                    $fields = $result.Fields
-                    $representation = @{}
-                    foreach($field in $fields.Name){
-                        try{
-                            $representation.Add($field, $result.Item($field))
-                        } catch {
-                            Write-Host "Failed to add field: $field"
+                    $wiql = "SELECT [System.ID], [System.Title] FROM WorkItems WHERE [System.WorkItemType] = '$type'  AND [System.TeamProject] = '$name' ORDER BY [Changed Date] DESC"
+                    $wiQuery = New-Object -TypeName "Microsoft.TeamFoundation.WorkItemTracking.Client.Query" -ArgumentList $wiService, $wiql
+                    $results = $wiQuery.RunQuery()
+
+                    if ($results.Count -gt 0) {
+                
+                        [PSObject[]]$csv = @()
+                        foreach($result in $results){
+                            $fields = $result.Fields
+                            $representation = @{}
+                            foreach($field in $fields.Name){
+                                try{
+                                    $representation.Add($field, $result.Item($field))
+                                } catch {
+                                    Write-Host "Failed to add field: $field"
+                                }
+                            }
+
+                            $output = New-Object PSObject -Property $representation
+                            $csv = $csv + $output
                         }
+                        $csvOutput = $csv | ConvertTo-Csv -NoTypeInformation
+                        $fileName = $($dumpFolder.FullName) + "\$type.csv"
+                        $csvOutput >> $fileName
+
+                    } else {
+                        Write-Host "There are no work items of type " -NoNewline
+                        Write-host $type -NoNewline -ForegroundColor Green
+                        Write-Host " in Team Project " -NoNewline
+                        Write-Host $name -ForegroundColor Cyan
                     }
-
-                    $output = New-Object PSObject -Property $representation
-                    $csv = $csv + $output
                 }
-                $csvOutput = $csv | ConvertTo-Csv -NoTypeInformation
-                $fileName = $($folder.FullName) + "\$witType.csv"
-                $csvOutput >> $fileName
-
-            } else {
-                Write-Host "There are no work items of type $witType in Team Project $tpName"
             }
-
         }
     }
 
@@ -952,7 +967,7 @@ function Remove-TfsWorkItems() {
     }
 
     end{}
-} #end Function Delete-TfsWorkItems
+} #end Function Remove-TfsWorkItems
 
 function Remove-TfsWorkItemTemplate() {
 <# 
@@ -1043,7 +1058,7 @@ function Remove-TfsWorkItemTemplate() {
     }
 
     end{}
-} #end Function Destroy-TfsWorkItemTemplate
+} #end Function Remove-TfsWorkItemTemplate
 
 function Find-TfsFieldDescription{
     <# 
@@ -1092,8 +1107,7 @@ function Find-TfsFieldDescription{
         $allFields;
     }
     end {}
-}
-
+} #end function Find-TfsFieldDescription
 
 function Update-TfsFieldNames {
     <# 
@@ -1133,7 +1147,7 @@ function Update-TfsFieldNames {
         }
     }
     end {}
-}
+} #end function Update-TfsFieldNames
 
 function Update-TfsWorkItemTemplate() {
 <# 
@@ -1179,7 +1193,7 @@ function Update-TfsWorkItemTemplate() {
         }
     }
     end{}
-}
+} #end function Update-TfsWorkItemTemplate
 
 function Import-TfsWorkItemTemplate() {
     <# 
@@ -1223,7 +1237,7 @@ function Import-TfsWorkItemTemplate() {
         }
     }
     end{}
-}
+} #end function Import-TfsWorkItemTemplate
 
 function Get-TfsTeamProjectCollectionAnalysis() {
 <# 
@@ -1389,7 +1403,7 @@ function Get-TfsTeamProjectCollectionAnalysis() {
 
         Write-Verbose "$(Get-Date -Format g) - Analysis Complete"
     }
-}
+} #end function Get-TfsTeamProjectCollectionAnalysis
 
 function Save-TfsCleanedWITD(){
 <# 
@@ -1439,7 +1453,7 @@ function Save-TfsCleanedWITD(){
         Write-Verbose "File location: $fileLocation"
         [void]$witd.Save($fileLocation)
     }
-}
+} #end function Save-TfsCleanedWITD
 
 function Get-TfsXAMLBuildsCreatingWorkItems(){
 <# 
@@ -1519,7 +1533,7 @@ function Get-TfsXAMLBuildsCreatingWorkItems(){
         Write-Output $bdefs
    }
    end{}
-}
+} #end function Get-TfsXAMLBuildsCreatingWorkItems
 
 function Update-TfsXAMLBuildDefintionDropFolder(){
 <# 
@@ -1590,7 +1604,7 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
             #iterate through the TeamProjects
             foreach ($tp in $tps)
             { 
-                if (![string]::IsNullorWhiteSpace($tpcName) -and (!$tpc.Name.ToLower().Contains($tpcName.ToLower())) ) { continue; }
+                if (![string]::IsNullorWhiteSpace($tpName) -and (!$tp.Name.ToLower().Contains($tpName.ToLower())) ) { continue; }
 
                 $buildDefinitionList = $bs.QueryBuildDefinitions($tp.Name) 
                                
@@ -1642,7 +1656,7 @@ function Update-TfsXAMLBuildDefintionDropFolder(){
         }
    }
    end{}
-}
+} #end function Update-TfsXAMLBuildDefintionDropFolder
 
 function Request-TfsXAMLBuild(){
 <# 
@@ -1869,7 +1883,7 @@ function Request-TfsXAMLBuild(){
         }
    }
    end{}
-}
+} #end function Request-TfsXAMLBuild
 
 function Get-TfsXAMLBuilds(){
 <# 
@@ -1908,12 +1922,12 @@ function Get-TfsXAMLBuilds(){
         [alias("Build")]
         [string]$buildName
     )
-   begin {
+    begin {
         $tpcName = $tpcName.ToLower()
         $tpName = $tpName.ToLower()
         $buildName = $buildName.ToLower()
    }
-   process{
+    process{
  
         $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
         
@@ -1980,8 +1994,8 @@ function Get-TfsXAMLBuilds(){
         $report.ActiveBulds = $activeBuilds
         $report
    }
-   end{}
-}
+    end{}
+} #end function Get-TfsXAMLBuilds
 
 function Update-TfsXAMLBuildDefintionCurrentController(){
 <# 
@@ -2021,8 +2035,8 @@ function Update-TfsXAMLBuildDefintionCurrentController(){
         [parameter(Mandatory = $false)]
         [string]$buildName
     )
-   begin{}
-   process{
+    begin{}
+    process{
         $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
         foreach($tpcId in $tpcIds)
         {
@@ -2096,8 +2110,8 @@ function Update-TfsXAMLBuildDefintionCurrentController(){
             }
         }
    }
-   end{}
-}
+    end{}
+} 
 
 function Get-TfsUsers(){
 <# 
@@ -2141,8 +2155,148 @@ function Get-TfsUsers(){
         }
     }
     end{}
-}
+} #end function Get-TfsUsers
 
+function Get-TfsUsersWorkSpaces() {
+<# 
+    .SYNOPSIS
+    Get a list of all Domain Users that TFS knows about
+    .DESCRIPTION
+    This CmdLet will list all of the users who TFS would know about from a permissions, feature enablement, or group membership perspective
+    .EXAMPLE
+    Get-TfsUsers $configServer 
+    .EXAMPLE
+    Get-TfsUsers $configServer "ProjectCollection01"
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+#>
+    [CmdLetBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $false)]
+        [alias("User")]
+        [string]$userName,
+        [alias("Computer")]
+        [string]$computerName
+    )
+
+    begin{
+        $param1 = [System.Management.Automation.Language.NullString]::Value
+        $param2 = [System.Management.Automation.Language.NullString]::Value
+        $param3 = [System.Management.Automation.Language.NullString]::Value
+
+        if (![string]::IsNullOrEmpty($userName)) {$param2 = $userName}
+        if (![string]::IsNullOrEmpty($computerName)) {$param3 = $computerName}
+    }
+    process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            $vcs = $tpc.GetService([Microsoft.TeamFoundation.VersionControl.Client.VersionControlServer])
+            $workspaces += $vcs.QueryWorkspaces($param1, $param2, $param3)
+        }
+        Write-Output $workspaces
+    }
+    end{}
+}#end function Get-TfsUsersWorkSpaces
+
+function Remove-TfsUsersWorkSpace() {
+<# 
+    .SYNOPSIS
+    Get a list of all Domain Users that TFS knows about
+    .DESCRIPTION
+    This CmdLet will list all of the users who TFS would know about from a permissions, feature enablement, or group membership perspective
+    .EXAMPLE
+    Get-TfsUsers $configServer 
+    .EXAMPLE
+    Get-TfsUsers $configServer "ProjectCollection01"
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+#>
+    [CmdLetBinding(SupportsShouldProcess=$true, ConfirmImpact="High")]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $true)]
+        [alias("Workspace")]
+        [Microsoft.TeamFoundation.VersionControl.Client.Workspace]$workspaceToDelete
+    )
+
+    begin{}
+    process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            $vcs = $tpc.GetService([Microsoft.TeamFoundation.VersionControl.Client.VersionControlServer])
+            $found += $vcs.QueryWorkspaces($workspaceToDelete.Name, $workspaceToDelete.OwnerName, $workspaceToDelete.Computer)
+            if ($found.Length -ne 1) {continue}
+            $desc = "Workspace: $($found[0].Name), Owner:$($found[0].OwnerName)"
+            if ($PSCmdlet.ShouldContinue($desc, "Remove Workspace Permanently")){
+                if ($WhatIfPreference){
+                    Write-Host "$desc would have been deleted."
+                }else {
+                    $vcs.DeleteWorkspace($found[0].Name, $found[0].OwnerName)
+                }
+            }
+        }
+    }
+    end{}
+}#end function Remove-TfsUsersWorkSpace
+
+function Get-TfsUsersCheckouts() {
+<# 
+    .SYNOPSIS
+    Get a list of all Domain Users that TFS knows about
+    .DESCRIPTION
+    This CmdLet will list all of the users who TFS would know about from a permissions, feature enablement, or group membership perspective
+    .EXAMPLE
+    Get-TfsUsers $configServer 
+    .EXAMPLE
+    Get-TfsUsers $configServer "ProjectCollection01"
+    .PARAMETER tpcName
+    Optional filter to limit to TeamProjectCollections with the name matching the passed in value
+#>
+    [CmdLetBinding(SupportsShouldProcess=$true, ConfirmImpact="High")]
+    param(
+        [parameter(Mandatory = $true)]
+        [Microsoft.TeamFoundation.Client.TfsConfigurationServer]$configServer,
+        [parameter(Mandatory = $false)]
+        [alias("User")]
+        [string]$userName,
+        [alias("TeamProjectCollection")]
+        [string]$tpcName,
+        [alias("TeamProject")]
+        [string]$tpName
+    )
+
+    begin{
+        $tpcName = $tpcName.ToLower()
+        $tpName = $tpName.ToLower()
+        $paramUserName = [System.Management.Automation.Language.NullString]::Value
+        if (![string]::IsNullOrEmpty($userName)) { $paramUserName = $userName }
+    }
+    process{
+        $tpcIds = Get-TfsTeamProjectCollectionIds $configServer
+        foreach($tpcId in $tpcIds)
+        {
+            #Get TPC instance
+            $tpc = $configServer.GetTeamProjectCollection($tpcId)
+            
+            if (ShouldSkip $tpc.Name $tpcName) {continue}
+            
+            $vcs = $tpc.GetService([Microsoft.TeamFoundation.VersionControl.Client.VersionControlServer])
+            [String[]]$searchBranch =  @("$/")
+            $found = $vcs.QueryPendingSets($searchBranch, [Microsoft.TeamFoundation.VersionControl.Client.RecursionType]::Full, [System.Management.Automation.Language.NullString]::Value, $paramUserName)
+            Write-Output $found
+        }
+    }
+    end{}
+}#end function Get-TfsUsersCheckouts
 
 Set-Alias gh Get-Hash
 Set-Alias gtfs Get-TfsConfigServer
@@ -2157,4 +2311,13 @@ Export-ModuleMember -Function "Request-TfsXAMLBuild", "Update-TfsXAMLBuildPlatfo
 Export-ModuleMember -Function "Backup-TfsWorkItems", "Remove-TfsWorkItems", "Remove-TfsWorkItemTemplate", "Import-TfsWorkItemTemplate", "Update-TfsWorkItemTemplate", "Save-TfsCleanedWITD"
 Export-ModuleMember -Function "Get-TfsTeamProjectCollectionAnalysis"
 Export-ModuleMember -Function "Update-TfsFieldNames", "Find-TfsFieldDescription"
+Export-ModuleMember -Function "Get-TfsUsersWorkSpaces", "Remove-TfsUsersWorkspace", "Get-TfsUsersCheckouts"
+
+#### Private Helper Functions
+function ShouldSkip ($actual, $desired) {
+    if (![string]::IsNullorWhiteSpace($desired) -and (!$actual.ToLower().Contains($desired.ToLower())) ) { $true } else { $false }
+}
+
+
+#### End Private Helper Functions
 

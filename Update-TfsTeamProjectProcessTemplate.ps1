@@ -18,12 +18,15 @@ $myVar = @{
     "TFSUrl" = "http://ditfssb01:8080/tfs/";
     "TPC01" = "ProjectCollection01";  
     "TPC02" = "ProjectCollection02";  
-    "ResultsDir" = "C:\TFS\Upgrade-Results";
+    "ResultsDir" = "\\exchange\exchange\dwhite2\TFS Production Upgrade\";
     "DefaultDir" = "WITD_Templates";
     "ProcessTemplateRoot" = "\\cocdata1\dwhite2$\TFS\ProcessTemplates 2015";
     "ScrumDir" = "Scrum\WorkItem Tracking\TypeDefinitions";
+    "ScrumDirLinkTypes" = "Scrum\WorkItem Tracking\LinkTypes";
     "AgileDir" = "Agile\WorkItem Tracking\TypeDefinitions";
+    "AgileDirLinkTypes" = "Agile\WorkItem Tracking\LinkTypes";
     "CMMIDir" = "CMMI\WorkItem Tracking\TypeDefinitions";
+    "CMMIDirLinkTypes" = "CMMI\WorkItem Tracking\LinkTypes";
 }
 $myVar.GetEnumerator() | % { Write-Host $("{0}" -f $_.Key) -ForegroundColor Green -NoNewline; Write-Host $(" = {0}" -f $_.Value) -ForegroundColor Magenta }
 
@@ -330,40 +333,57 @@ $defaultDir = Join-Path -Path $folder -ChildPath $myVar.DefaultDir | New-Folder
 ###### Recreate child folders
 $scrumDir = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.ScrumDir | New-Folder 
 $agileDir = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.AgileDir | New-Folder 
-$CMMIDir  = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.CMMIDir  | New-Folder 
+$CMMIDir  = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.CMMIDir  | New-Folder
+$scrumLinkTypeDir = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.ScrumDirLinkType | New-Folder 
+$agileLinkTypeDir = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.AgileDirLinkType | New-Folder 
+$CMMILinkTypeDir  = Join-Path -Path $myVar.ProcessTemplateRoot -ChildPath $myVar.CMMIDirLinkType  | New-Folder 
 
-#foreach ($tp in $CMMI_TPs_To_Upgrade)
-#{
-#   #import in tweaked requirement WITD
-#   Write-Host "Importing new CMMI (2015) WITD into $tp" -ForegroundColor Yellow
-#   Import-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $CMMIDir
-#   & $witadmin importcategories /collection:$tpc01Url /p:$($tp) /f:"$($CMMIDir.Parent.FullName.ToString() + "\categories.xml")"
-#}
+foreach ($tp in $CMMI_TPs_To_Upgrade)
+{
+   #import in tweaked requirement WITD
+   Write-Host "Importing new CMMI (2015) WITD into $tp" -ForegroundColor Yellow
+   Import-TfsWorkItemTemplate $configServer $myVar.TPC01 $tp $CMMIDir
+   & $witadmin importcategories /collection:$tpc01Url /p:$($tp) /f:"$($CMMIDir.Parent.FullName.ToString() + "\categories.xml")"
+   $linkTypeFiles = Get-ChildItem $CMMILinkTypeDir
+   foreach($file in $linkTypeFiles){
+    & $witadmin importcategories /collection:$tpc01Url /p:$($tp) /f:"$($file.FullName)"
+   }
+}
 
-###### Team Project Upgrades in TPC02
-#foreach ($tp in $CMMI_TPs_To_Upgrade_TPC02)
-#{
-#   #import in tweaked requirement WITD
-#   Write-Host "Importing new CMMI (2015) WITD into $tp" -ForegroundColor Yellow
-#   Import-TfsWorkItemTemplate $configServer $myVar.TPC02 $tp $CMMIDir
-#   & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($CMMIDir.Parent.FullName.ToString() + "\categories.xml")"
-#}
-#foreach ($tp in $AGILE_TPs_To_Upgrade_TPC02)
-#{
-#   #import in tweaked requirement WITD
-#   Write-Host "Importing new Agile (2015) WITD into $tp" -ForegroundColor Yellow
-#   Import-TfsWorkItemTemplate $configServer $myVar.TPC02 $tp $agileDir
-#   & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($agileDir.Parent.FullName.ToString() + "\categories.xml")"
-#}
+##### Team Project Upgrades in TPC02
+foreach ($tp in $CMMI_TPs_To_Upgrade_TPC02)
+{
+   #import in tweaked requirement WITD
+   Write-Host "Importing new CMMI (2015) WITD into $tp" -ForegroundColor Yellow
+   Import-TfsWorkItemTemplate $configServer $myVar.TPC02 $tp $CMMIDir
+   & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($CMMIDir.Parent.FullName.ToString() + "\categories.xml")"
+   $linkTypeFiles = Get-ChildItem $CMMILinkTypeDir
+   foreach($file in $linkTypeFiles){
+    & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($file.FullName)"
+   }
+}
+foreach ($tp in $AGILE_TPs_To_Upgrade_TPC02)
+{
+   #import in tweaked requirement WITD
+   Write-Host "Importing new Agile (2015) WITD into $tp" -ForegroundColor Yellow
+   Import-TfsWorkItemTemplate $configServer $myVar.TPC02 $tp $agileDir
+   & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($agileDir.Parent.FullName.ToString() + "\categories.xml")"
+   $linkTypeFiles = Get-ChildItem $agileLinkTypeDir
+   foreach($file in $linkTypeFiles){
+    & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($file.FullName)"
+   }
+}
 foreach ($tp in $SCRUM_TPs_To_Upgrade_TPC02)
 {
    #import in tweaked requirement WITD
    Write-Host "Importing new Scrum (2015) WITD into $tp" -ForegroundColor Yellow
    Import-TfsWorkItemTemplate $configServer $myVar.TPC02 $tp $scrumDir
    & $witadmin importcategories /collection:$tpc02Url /p:$($tp) /f:"$($scrumDir.Parent.FullName.ToString() + "\categories.xml")"
+   $linkTypeFiles = Get-ChildItem $scrumLinkTypeDir
+   foreach($file in $linkTypeFiles){
+    & $witadmin importcategories /collection:$tpc02Url /p:$($tp)  /f:"$($file.FullName)"
+   }
 }
-
-
 
 ###### Old Scrum and Agile Upgrade/Conversion
 $scorchAndReplaceTPList = $OldAgileTPsToUpgrade + $OldScrumTPsToUpgrade
@@ -401,5 +421,9 @@ foreach ($tp in $scorchAndReplaceTPList){
     Write-Host "Importing Scrum 2013.4 Categories into $tp" -ForegroundColor Yellow
     & $witadmin importcategories /collection:$tpc01Url /p:$($tp) /f:"$($scrumDir.Parent.FullName.ToString() + "\categories.xml")"
 
+    $linkTypeFiles = Get-ChildItem $scrumLinkTypeDir
+    foreach($file in $linkTypeFiles){
+        & $witadmin importcategories /collection:$tpc01Url /p:$($tp)  /f:"$($file.FullName)"
+    }
     Write-Host "$tp should now be ready for an feature configuration on 2013.4" -ForegroundColor Green
 }
